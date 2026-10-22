@@ -1688,7 +1688,16 @@ function tasasEfectivas(st) {
 function tiendaView(st) { return { mp: st.mp, ms: st.ms, tasas: tasasEfectivas(st) }; }
 function catalogURL(st) {
   var b = (APP.cfg.base || '').trim();
-  if (!b) b = location.protocol.indexOf('http') === 0 ? location.origin + location.pathname.replace(/[^\/]*$/, '') : '';
+  if (!b) {
+    var g = (APP.cfg.gh || {});
+    if (g.owner && g.repo) {
+      b = (g.repo === g.owner + '.github.io')
+        ? ('https://' + g.owner + '.github.io/')
+        : ('https://' + g.owner + '.github.io/' + g.repo + '/');
+    } else if (location.protocol.indexOf('http') === 0) {
+      b = location.origin + location.pathname.replace(/[^\/]*$/, '');
+    }
+  }
   if (b && !/\/$/.test(b) && !/\.html?$/.test(b)) b += '/';
   return b ? b + '?t=' + st.slug : '';
 }
@@ -1891,13 +1900,38 @@ function blobAURI(blob) { return new Promise(function (res, rej) { var r = new F
 /* Guardar / compartir archivos: Capacitor → Web Share con archivos → descarga */
 async function guardarArchivo(blob, nombre, titulo) {
   var C = window.Capacitor && window.Capacitor.Plugins;
-  if (C && C.Filesystem && C.Share) {
-    try { var data = await blobAB64(blob); var r = await C.Filesystem.writeFile({ path: nombre, data: data, directory: 'CACHE' }); await C.Share.share({ title: titulo || nombre, url: r.uri, dialogTitle: titulo || nombre }); return 'compartido'; } catch (e) { if (e && /cancel/i.test(String(e.message || e))) return 'cancelado'; }
-  }
+  var grande = blob && blob.size > 12 * 1048576;
+  /* 1) Web Share con archivo (menos memoria que base64) */
   try {
-    var f = new File([blob], nombre, { type: blob.type });
-    if (navigator.canShare && navigator.canShare({ files: [f] })) { await navigator.share({ files: [f], title: titulo || nombre }); return 'compartido'; }
-  } catch (e) { if (e && e.name === 'AbortError') return 'cancelado'; }
+    var f0 = new File([blob], nombre, { type: blob.type || 'application/zip' });
+    if (navigator.canShare && navigator.canShare({ files: [f0] })) {
+      await navigator.share({ files: [f0], title: titulo || nombre });
+      return 'compartido';
+    }
+  } catch (e) { if (e && (e.name === 'AbortError' || /cancel/i.test(String(e.message || e)))) return 'cancelado'; }
+  /* 2) Capacitor: escribir y compartir (evitar base64 si es muy grande) */
+  if (C && C.Filesystem && C.Share && !grande) {
+    try {
+      var data = await blobAB64(blob);
+      var dirs = ['DOCUMENTS', 'CACHE', 'EXTERNAL'];
+      var r = null, lastErr = null;
+      for (var di = 0; di < dirs.length && !r; di++) {
+        try { r = await C.Filesystem.writeFile({ path: nombre, data: data, directory: dirs[di] }); } catch (we) { lastErr = we; }
+      }
+      if (r && r.uri) {
+        try { await C.Share.share({ title: titulo || nombre, url: r.uri, dialogTitle: titulo || nombre }); return 'compartido'; }
+        catch (se) { if (se && /cancel/i.test(String(se.message || se))) return 'cancelado'; toast('Archivo guardado. Ábrelo desde Archivos / Descargas.', 'ok', 4500); return 'guardado'; }
+      }
+      if (lastErr) throw lastErr;
+    } catch (e) {
+      if (e && /cancel/i.test(String(e.message || e))) return 'cancelado';
+      /* sigue al fallback */
+    }
+  }
+  if (grande && C) {
+    toast('La copia es muy pesada. Prueba «Copia sin fotos» o comparte por partes.', 'bad', 6000);
+  }
+  /* 3) Descarga clásica */
   var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = nombre; document.body.appendChild(a); a.click();
   setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 4000); return 'descargado';
 }
@@ -3338,10 +3372,39 @@ ACT['exp-xlsx'] = async function (el) {
 
 /* ---------------- Copia de seguridad (zip con fotos) ---------------- */
 async function crearBackup(conFotos) {
-  var Z = await jszip(), zip = new Z(), data = JSON.parse(JSON.stringify(APP));
-  data.auth = null; try { if (data.cfg) { if (data.cfg.gh) data.cfg.gh.token = ''; if (data.cfg.ai) data.cfg.ai.key = ''; data.cfg.eltoque = ''; data.cfg.apiKey = ''; data.cfg.imgbb = ''; data.cfg.srvStats = null; } } catch (e) { } zip.file('datos.json', JSON.stringify({ app: 'catalogo', v: 1, fecha: Date.now(), data: data }));
-  if (conFotos) { var all = await fotoAll(); for (var i = 0; i < all.length; i++) { var r = all[i]; if (r.g) zip.file('fotos/' + r.id + '-g.bin', r.g); if (r.t && r.t !== r.g) zip.file('fotos/' + r.id + '-t.bin', r.t); } }
-  return zip.generateAsync({ type: 'blob', compression: 'STORE' });
+  var Z = await jszip(), zip = new Z();
+  var data = JSON.parse(JSON.stringify(APP));
+  data.auth = null;
+  try {
+    if (data.cfg) {
+      if (data.cfg.gh) data.cfg.gh.token = '';
+      if (data.cfg.ai) data.cfg.ai.key = '';
+      data.cfg.eltoque = ''; data.cfg.apiKey = ''; data.cfg.imgbb = ''; data.cfg.srvStats = null;
+    }
+  } catch (e) { }
+  zip.file('datos.json', JSON.stringify({ app: 'catalogo', v: 1, fecha: Date.now(), data: data }));
+  if (conFotos) {
+    /* Solo fotos usadas (no todo IndexedDB). Una a una y prioriza miniatura para no tumbar el APK. */
+    var st0 = ST() || { prods: [], logo: '', portada: '', espec: '' };
+    var ids = [];
+    try { ids = fotosUsadas(st0); } catch (e1) { ids = []; }
+    [st0.logo, st0.portada, st0.espec].forEach(function (x) { if (x && ids.indexOf(x) < 0) ids.push(x); });
+    var MAX = 150;
+    if (ids.length > MAX) ids = ids.slice(0, MAX);
+    for (var i = 0; i < ids.length; i++) {
+      if (i % 8 === 0) setBusyText('Empaquetando fotos… ' + (i + 1) + '/' + ids.length);
+      try {
+        var r = await fotoGet(ids[i]);
+        if (!r) continue;
+        /* Miniatura primero (mucho más liviana). Si no hay, la grande. */
+        var blob = r.t || r.g;
+        if (blob) zip.file('fotos/' + r.id + '-g.bin', blob);
+        r = null; blob = null;
+      } catch (e2) { }
+    }
+  }
+  setBusyText('Comprimiendo el archivo…');
+  return zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 1 } });
 }
 async function restaurarBackup(file) {
   var Z = await jszip(), zip = await Z.loadAsync(await file.arrayBuffer()), f = zip.file('datos.json'); if (!f) throw new Error('Este archivo no es una copia del Catálogo de Productos.');
@@ -3398,7 +3461,19 @@ ACT.olvide = async function () {
 ACT.logout = async function () { if (await confirmar('¿Cerrar sesión?', 'Cerrar sesión', false, 'Tus tiendas siguen guardadas en este teléfono.')) { salir(); refresh(); } };
 ACT['nube-restaurar'] = async function () { var done = busy('Buscando en tu nube…'); try { var n = await restaurarDeNube(); done(); toast(n ? 'Se recuperaron ' + n + ' tienda(s)' : 'No hay tiendas nuevas en la nube'); if (n) go('/'); } catch (e) { done(); toast(e.message, 'bad', 4500); } };
 ACT['copy-cfg'] = function () { copiar(configJsTexto()); };
-ACT['bk-save'] = async function (el) { var done = busy('Creando la copia…'); try { var b = await crearBackup(el.getAttribute('data-f') === '1'); done(); await guardarArchivo(b, 'catalogo-copia-' + ahoraHabana().fecha + '.zip', 'Copia del Catálogo de Productos'); } catch (e) { done(); toast(e.message, 'bad'); } };
+ACT['bk-save'] = async function (el) {
+  var conFotos = el.getAttribute('data-f') === '1', done = busy(conFotos ? 'Preparando la copia con fotos…' : 'Preparando la copia…');
+  try {
+    var b = await crearBackup(conFotos); done();
+    var r = await guardarArchivo(b, 'catalogo-copia-' + ahoraHabana().fecha + (conFotos ? '' : '-sin-fotos') + '.zip', 'Copia del Catálogo de Productos');
+    if (r !== 'cancelado') { APP.cfg.lastBackup = Date.now(); save(true); toast('Copia ' + r + ' ✓'); }
+  } catch (e) {
+    done();
+    var msg = (e && e.message) ? String(e.message) : 'No se pudo crear la copia';
+    if (/memory|heap|out of|alloc|quota/i.test(msg)) msg = 'Memoria insuficiente. Usa «Copia sin fotos».';
+    toast(msg, 'bad', 6000);
+  }
+};
 ACT['bk-load'] = async function () {
   var f = await elegirArchivo('.zip,application/zip'); if (!f) return; if (!(await confirmar('¿Restaurar esta copia?', 'Restaurar', false, 'Las tiendas de la copia reemplazan a las que tengan el mismo identificador.'))) return;
   var done = busy('Restaurando…'); try { var r = await restaurarBackup(f); done(); toast('Restauradas ' + r.tiendas + ' tienda(s) y ' + r.fotos + ' foto(s)'); go('/'); } catch (e) { done(); toast(e.message, 'bad', 4500); }
@@ -3711,6 +3786,7 @@ ROUTES.unshift([/^\/conexion$/, function () {
     <label class="lbl">Repositorio</label><input class="in" data-f="gh.repo" value="${g.repo}" autocapitalize="none">
     <label class="lbl">Rama</label><input class="in" data-f="gh.branch" value="${g.branch}" autocapitalize="none">
     <label class="lbl">Token</label><input class="in" type="password" data-f="gh.token" value="${g.token}" autocapitalize="none">
+    <label class="lbl">Dirección pública del catálogo</label><input class="in" data-f="base" value="${c.base}" placeholder="https://tuusuario.github.io/" autocapitalize="none"><p class="help" style="margin:6px 0 0">URL de tu sitio en GitHub Pages (ej. https://josecarlosfernandezhung-droid.github.io/). Los enlaces y el QR usan esta dirección.</p>
     <div class="wr" style="margin-top:10px"><button class="btn pri sm" data-act="gh-test">Probar conexión</button><button class="btn sm" data-act="gh-import">Traer datos del sitio</button></div></div>
     <div class="card"><h2>Servidor de pedidos (PC)</h2><p class="help" style="margin:0 0 6px">Trae el stock y lo que más se vende desde tu servidor (misma WiFi). Al publicar se actualiza solo: agotados, nuevos y más vendidos en la web.</p>
     <label class="lbl">Dirección del servidor</label><input class="in" data-f="srv.url" value="${sv.url}" placeholder="http://192.168.1.5:8080" autocapitalize="none">
@@ -3756,13 +3832,25 @@ ACT['gh-import'] = async function () { if (!confirm('Se reemplazarán los datos 
     await snapGuardar(true); var d = JSON.parse(s.json); APP.stores = d.stores; APP.cur = d.cur || (d.stores[0] && d.stores[0].id); APP.stores.forEach(function (x) { migrar(x); x.dirty = true; }); save(true); toast('Copia restaurada ✓'); go('/');
   };
   ACT['bk-crear'] = async function (el) {
-    var conFotos = el.getAttribute('data-v') === '1', done = busy('Preparando la copia…');
+    var conFotos = el.getAttribute('data-v') === '1', done = busy(conFotos ? 'Preparando la copia con fotos…' : 'Preparando la copia…');
     try {
+      if (conFotos) {
+        var nFotos = 0; try { nFotos = (await fotoAll()).length; } catch (e0) { }
+        if (nFotos > 80) setBusyText('Empaquetando ' + nFotos + ' fotos (puede tardar)…');
+      }
       var blob = await crearBackup(conFotos), st = ST(), nom = 'catalogo-copia-' + ((st && st.slug) || 'tienda') + '-' + new Date().toISOString().slice(0, 10) + (conFotos ? '' : '-sin-fotos') + '.zip';
       done(); done = function () { };
+      setBusyText('Guardando / compartiendo…');
       var r = await guardarArchivo(blob, nom, 'Copia del Catálogo de Productos');
-      if (r !== 'cancelado') { APP.cfg.lastBackup = Date.now(); save(true); toast('Copia ' + r + ' ✓'); refresh(); }
-    } catch (e) { done(); toast(e.message || 'No se pudo crear la copia', 'bad', 5000); }
+      if (r !== 'cancelado') { APP.cfg.lastBackup = Date.now(); save(true); toast(r === 'guardado' ? 'Copia guardada en el teléfono ✓' : ('Copia ' + r + ' ✓'), 'ok', 4000); refresh(); }
+    } catch (e) {
+      done();
+      var msg = (e && e.message) ? String(e.message) : 'No se pudo crear la copia';
+      if (/memory|heap|out of|alloc|quota|NS_ERROR_OUT_OF_MEMORY/i.test(msg) || (e && e.name === 'QuotaExceededError')) {
+        msg = 'Memoria insuficiente. Usa «Copia sin fotos» (más liviana) y guarda las fotos aparte.';
+      }
+      toast(msg, 'bad', 6500);
+    }
   };
   ACT['bk-restaurar'] = async function () {
     var f = await elegirArchivo('.zip,application/zip,application/octet-stream'); if (!f) return;
@@ -3777,7 +3865,7 @@ ACT['gh-import'] = async function () { if (!confirm('Se reemplazarán los datos 
         <p class="help" style="margin:0 0 8px">Tus datos viven solo en este teléfono. Si cambias de teléfono, desinstalas la app o borras los datos, se pierden. Guarda una copia fuera de aquí (Telegram, Drive, WhatsApp o la PC).</p>
         <p style="margin:0 0 10px"><span class="chip ${viejo ? 'bad' : 'ok'}">Última copia: ${fecha(ult)}</span> <span class="help">· ${n} productos</span></p>
         <div class="wr"><button class="btn pri sm" data-act="bk-crear" data-v="1">Copia con fotos</button><button class="btn sm" data-act="bk-crear" data-v="0">Copia sin fotos</button></div>
-        <p class="help" style="margin:8px 0 0">Con fotos guarda todo, pero pesa más. Sin fotos es ligera: las fotos ya publicadas están en GitHub. La copia no incluye tus claves ni el token.</p></div>
+        <p class="help" style="margin:8px 0 0">Con fotos incluye miniaturas de los productos usados (para no cerrar la app). Sin fotos es más rápida. Las fotos a tamaño completo ya publicadas siguen en GitHub. La copia no incluye claves ni el token.</p></div>
       <div class="card"><h2>Restaurar una copia</h2><p class="help" style="margin:0 0 8px">Elige un archivo .zip creado con este panel. Se actualizan las tiendas que coinciden y se agregan las demás.</p><button class="btn sm" data-act="bk-restaurar">Elegir copia…</button></div>
       <div class="card"><h2>Copias automáticas del teléfono</h2><p class="help" style="margin:0 0 6px">El panel guarda solo las últimas 3 (una cada 6 horas). Sirven si algo se daña, pero no si cambias de teléfono: para eso haz la copia de arriba.</p><div id="bk-lista"></div></div></div>`;
     return { title: 'Copia de seguridad', back: '/menu', nav: 'menu', body: body, after: pintarSnaps };
