@@ -1,0 +1,7 @@
+{
+  "appId": "com.tototools.catalogo",
+  "appName": "Catálogo de Productos",
+  "webDir": "www",
+  "server": { "androidScheme": "https" },
+  "android": { "allowMixedContent": false }
+}

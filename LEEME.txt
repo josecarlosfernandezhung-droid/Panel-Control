@@ -1,0 +1,5 @@
+1. Sube TODO el contenido de esta carpeta a un repositorio de GitHub (incluida la carpeta oculta .github).
+2. Entra a la pestaña Actions > "Compilar APK" > Run workflow (o espera a que corra solo al subir).
+3. Cuando termine (unos 5 min), abre la ejecucion y descarga "Catalogo-de-Productos-apk" (zip con app-debug.apk).
+4. Instala el APK. Cada nueva compilacion se instala encima de la anterior sin perder datos.
+Para cambiar el panel: reemplaza www/index.html y sube.
