@@ -1887,9 +1887,24 @@ async function guardarFoto(src, opts) {
 }
 function elegirImagenes(multiple, camara) {
   return new Promise(function (res) {
-    var inp = camara ? $('#filecam') : $('#filepick'); inp.multiple = !!multiple && !camara; inp.value = '';
-    inp.onchange = function () { var f = Array.prototype.slice.call(inp.files || []); inp.onchange = null; res(f); };
-    inp.click();
+    var inp = camara ? $('#filecam') : $('#filepick');
+    if (!inp) { res([]); return; }
+    inp.multiple = !!multiple && !camara;
+    try { inp.value = ''; } catch (e0) { }
+    var done = false;
+    function finish(files) {
+      if (done) return;
+      done = true;
+      inp.onchange = null;
+      window.removeEventListener('focus', onFocus);
+      res(files || []);
+    }
+    inp.onchange = function () { finish(Array.prototype.slice.call(inp.files || [])); };
+    /* Si el usuario cancela el selector, onchange no se dispara: evento cancel, y como respaldo un margen largo tras volver el foco */
+    inp.oncancel = function () { setTimeout(function () { if (!done && !(inp.files && inp.files.length)) finish([]); }, 600); };
+    function onFocus() { setTimeout(function () { if (!done && !(inp.files && inp.files.length)) finish([]); }, 3000); }
+    window.addEventListener('focus', onFocus);
+    try { inp.click(); } catch (e1) { finish([]); }
   });
 }
 function elegirArchivo(accept) {
@@ -1913,7 +1928,7 @@ async function guardarArchivo(blob, nombre, titulo) {
   if (C && C.Filesystem && C.Share && !grande) {
     try {
       var data = await blobAB64(blob);
-      var dirs = ['DOCUMENTS', 'CACHE', 'EXTERNAL'];
+      var dirs = ['CACHE', 'DOCUMENTS', 'EXTERNAL'];
       var r = null, lastErr = null;
       for (var di = 0; di < dirs.length && !r; di++) {
         try { r = await C.Filesystem.writeFile({ path: nombre, data: data, directory: dirs[di] }); } catch (we) { lastErr = we; }
@@ -2312,7 +2327,7 @@ route(/^\/$/, function () {
       <div class="kpi"><b>${st.prods.filter(function (p) { var s2 = stockDe(p); return p.vis !== false && p.nombre && (!p.disp || (s2 !== null && s2 <= 0)); }).length}</b><span>Agotados</span></div>
       <div class="kpi"><b>${L.n}</b><span>Pedidos</span></div>
       <div class="kpi"><b>${fmtNum(L.ventas)}${Object.keys(L.otras).length ? '+' : ''}</b><span>Ventas (${st.mp})</span></div>
-      <div class="kpi"><b>${st.prods.filter(function (p) { return p.vis !== false; }).length}</b><span>Productos publicados</span></div>
+      ${window.fbListo && window.fbListo() ? html`<div class="kpi"><b>${fmtNum(window.fbVisitas(st, dias))}</b><span>Visitas</span></div>` : html`<div class="kpi"><b>${st.prods.filter(function (p) { return p.vis !== false; }).length}</b><span>Productos publicados</span></div>`}
     </div>
     ${bajos.length ? html`<div class="card"><h2>${ic('alert', 18)} Poco stock</h2>${bajos.slice(0, 5).map(function (p) { return html`<a class="li tap" style="padding-left:0;padding-right:0" href="#/productos/${p.id}"><div class="tx"><b>${p.nombre}</b><span>Quedan ${stockDe(p)}</span></div></a>`; })}${bajos.length > 5 ? html`<a href="#/inventario">Ver los ${bajos.length}</a>` : ''}</div>` : ''}
     <div class="card"><h2>Más pedidos</h2>${L.top.length ? L.top.map(function (t) { return html`<div class="li" style="padding-left:0;padding-right:0;min-height:44px"><div class="tx"><b>${t.n}</b></div><span class="chip">${t.q} uds</span></div>`; }) : html`<p class="help" style="margin:4px 0 0">Aún no hay pedidos en este periodo.</p>`}</div>
@@ -2385,6 +2400,7 @@ route(/^\/productos$/, function () {
     <div class="hz"><div class="sp" style="position:relative"><input class="in" id="p-q" type="search" placeholder="Buscar producto" value="${f.q}" style="border-radius:99px;padding-left:40px"><span style="position:absolute;left:12px;top:12px;color:var(--mut)">${ic('search', 20)}</span></div></div>
     <div class="fl">${chips.map(function (c) { return html`<button class="${f.f === c[0] ? 'on' : ''}" data-act="p-filtro" data-v="${c[0]}">${c[1]}${CN[c[0]] != null ? ' (' + CN[c[0]] + ')' : ''}</button>`; })}</div>
     ${st.cats.length ? html`<select class="in" id="p-cat"><option value="">Todas las categorías</option>${st.cats.map(function (c) { return html`<option value="${c.id}" ${f.cat === c.id ? raw('selected') : ''}>${c.n}</option>`; })}<option value="@sin" ${f.cat === '@sin' ? raw('selected') : ''}>Sin categoría</option></select>` : ''}
+    <div class="wr" style="margin:0"><button class="btn sm" data-act="p-fotos-lote">${ic('camera', 16)}Cargar fotos en lote</button></div>
     <div class="help" id="pcount"></div>
     <div class="card flat" id="plist"></div></div>`;
   return {
@@ -2405,11 +2421,168 @@ ACT['p-up'] = function (el) { moverProd(el.getAttribute('data-id'), -1); };
 ACT['p-down'] = function (el) { moverProd(el.getAttribute('data-id'), 1); };
 ACT['p-menu'] = function () {
   modal(html`<h2>Productos</h2><div class="card flat">
+    <a class="li tap" data-act="p-fotos-lote" style="min-height:56px"><div class="tx"><b>Cargar fotos en lote</b><span>Elige varias fotos; se asignan por el nombre del archivo</span></div></a>
     <a class="li tap" data-act="ajuste-precios" style="min-height:56px"><div class="tx"><b>Ajustar precios</b><span>Subir o bajar en % a todos o por categoría</span></div></a>
     <a class="li tap" href="#/excel" style="min-height:56px"><div class="tx"><b>Importar / exportar Excel</b><span>Carga tus productos desde una hoja de cálculo</span></div></a>
     <a class="li tap" href="#/categorias" style="min-height:56px"><div class="tx"><b>Categorías</b><span>Crear, renombrar y ordenar</span></div></a>
     <a class="li tap" href="#/inventario" style="min-height:56px"><div class="tx"><b>Inventario</b><span>Existencias, costos y ganancias</span></div></a></div>`);
 };
+
+ACT['p-fotos-lote'] = async function () {
+  try { closeModal(null); } catch (e0) { }
+  try {
+    if (!APP.ui) APP.ui = {};
+    var files = await elegirImagenes(true, false);
+    if (!files || !files.length) { toast('No se eligieron fotos', 'bad', 2500); return; }
+    var items = [];
+    for (var i = 0; i < files.length; i++) {
+      var f = files[i];
+      if (!f || !/^image\//.test(f.type || 'image/jpeg')) continue;
+      items.push({ file: f, url: URL.createObjectURL(f), name: f.name || ('foto-' + (i + 1)), q: '', pid: '', pnombre: '' });
+    }
+    if (!items.length) { toast('Ningún archivo de imagen válido', 'bad', 3000); return; }
+    APP.ui.bulkFotos = items;
+    abrirModalBulkFotos();
+  } catch (e) {
+    console.error(e);
+    toast('Error al cargar fotos: ' + ((e && e.message) || e), 'bad', 5000);
+  }
+};
+function bulkBuscarProductos(q) {
+  var st = ST(), qn = norm(q || ''), list = st.prods || [];
+  if (!qn) {
+    /* Sin texto: no sugerir nada (evita ruido de productos con foto) */
+    return [];
+  }
+  var scored = [];
+  for (var i = 0; i < list.length; i++) {
+    var p = list[i];
+    if (!p.nombre) continue;
+    var pn = norm(p.nombre), sk = norm(p.sku || '');
+    var score = 9999;
+    if (pn === qn || sk === qn) score = 0;
+    else if (pn.indexOf(qn) === 0) score = 1;
+    else if (pn.indexOf(qn) >= 0) score = 2;
+    else if (sk.indexOf(qn) >= 0) score = 3;
+    else {
+      var words = qn.split(' ').filter(function (w) { return w.length > 1; });
+      var hit = 0;
+      for (var w = 0; w < words.length; w++) { if (pn.indexOf(words[w]) >= 0) hit++; }
+      if (hit && hit === words.length) score = 4;
+      else if (hit >= 1) score = 5 + (words.length - hit);
+    }
+    if (score < 9999) scored.push({ p: p, score: score });
+  }
+  scored.sort(function (a, b) { return a.score - b.score || ((a.p.fotos && a.p.fotos.length ? 1 : 0) - (b.p.fotos && b.p.fotos.length ? 1 : 0)); });
+  return scored.slice(0, 8).map(function (x) { return x.p; });
+}
+function bulkSugHTML(idx, it) {
+  if (it.pid && it.pnombre) {
+    return '<div class="hz" style="margin-top:8px;padding:8px 10px;background:var(--soft);border-radius:10px"><div class="sp"><b style="color:var(--ok);word-break:break-word">' + esc(it.pnombre) + '</b><span class="help"> · asignada</span></div><button type="button" class="btn sm" data-act="bulk-unassign" data-i="' + idx + '">Quitar</button></div>';
+  }
+  var list = bulkBuscarProductos(it.q);
+  if (!list.length) {
+    return (it.q && it.q.trim()) ? '<p class="help" style="margin:8px 0 0">Ningún producto coincide con «' + esc(it.q) + '».</p>' : '';
+  }
+  return '<div style="margin-top:8px;display:flex;flex-direction:column;gap:6px">' + list.map(function (p) {
+    var tiene = p.fotos && p.fotos.length;
+    return '<button type="button" class="btn sm" style="justify-content:flex-start;text-align:left;height:auto;min-height:44px;padding:10px 12px;white-space:normal;line-height:1.35' + (tiene ? ';border-color:var(--ok)' : '') + '" data-act="bulk-assign" data-i="' + idx + '" data-id="' + esc(p.id) + '"><span style="flex:1;word-break:break-word">' + esc(p.nombre) + (tiene ? ' <span class="help">· ya tiene foto</span>' : ' <span class="help">· sin foto</span>') + '</span></button>';
+  }).join('') + '</div>';
+}
+function bulkActualizarBotonGuardar() {
+  var n = (APP.ui.bulkFotos || []).filter(function (x) { return x.pid; }).length;
+  var b = $('#md [data-act=bulk-save]');
+  if (b) { b.disabled = !n; b.textContent = 'Guardar fotos (' + n + ')'; }
+}
+function bulkActualizarFila(idx) {
+  var it = (APP.ui.bulkFotos || [])[idx];
+  if (!it) return;
+  var box = $('#md [data-bulk-sug="' + idx + '"]');
+  if (box) box.innerHTML = bulkSugHTML(idx, it);
+  bulkActualizarBotonGuardar();
+  hydrate($('#md'));
+}
+function abrirModalBulkFotos() {
+  var items = APP.ui.bulkFotos || [];
+  if (!items.length) return;
+  var rows = items.map(function (it, idx) {
+    return '<div class="card" style="margin:0 0 10px;padding:10px"><div class="hz" style="align-items:flex-start;gap:10px"><div class="th" style="width:64px;height:64px;flex:0 0 64px;border-radius:10px;overflow:hidden;background:var(--soft)"><img src="' + it.url + '" alt="" style="width:100%;height:100%;object-fit:cover"></div><div class="sp" style="min-width:0;width:100%"><div class="help" style="margin:0 0 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(it.name) + '</div><input class="in bulk-q" data-i="' + idx + '" type="search" placeholder="Buscar producto para esta foto…" value="' + esc(it.q) + '" autocomplete="off" style="min-height:42px"><div data-bulk-sug="' + idx + '">' + bulkSugHTML(idx, it) + '</div></div></div></div>';
+  }).join('');
+  var nAsig = items.filter(function (x) { return x.pid; }).length;
+  modal(html`<h2>Asignar fotos a productos</h2>
+    <p class="help" style="margin:0 0 12px">${items.length} foto(s). Escribe el nombre del producto en cada foto, elige de la lista y pulsa Guardar.</p>
+    <div id="bulk-list" style="max-height:55vh;overflow-y:auto;margin:0 -4px;padding:0 4px">${raw(rows)}</div>
+    <div class="wr" style="margin-top:14px">
+      <button type="button" class="btn sm" data-act="bulk-cancel">Cancelar</button>
+      <button type="button" class="btn pri sm" data-act="bulk-save" ${nAsig ? '' : raw('disabled')}>Guardar fotos (${nAsig})</button>
+    </div>`);
+  var root = $('#md');
+  if (!root) return;
+  root.addEventListener('input', function (ev) {
+    var inp = ev.target.closest('input.bulk-q');
+    if (!inp) return;
+    var i = +inp.getAttribute('data-i');
+    var it = (APP.ui.bulkFotos || [])[i];
+    if (!it) return;
+    it.q = inp.value;
+    it.pid = '';
+    it.pnombre = '';
+    clearTimeout(inp._bt);
+    inp._bt = setTimeout(function () { bulkActualizarFila(i); }, 150);
+  });
+}
+ACT['bulk-assign'] = function (el) {
+  var i = +el.getAttribute('data-i'), id = el.getAttribute('data-id');
+  var it = (APP.ui.bulkFotos || [])[i]; if (!it) return;
+  var p = prodById(ST(), id); if (!p) return;
+  it.pid = p.id; it.pnombre = p.nombre; it.q = p.nombre;
+  var inp = $('#md input.bulk-q[data-i="' + i + '"]');
+  if (inp) inp.value = p.nombre;
+  bulkActualizarFila(i);
+};
+ACT['bulk-unassign'] = function (el) {
+  var i = +el.getAttribute('data-i');
+  var it = (APP.ui.bulkFotos || [])[i]; if (!it) return;
+  it.pid = ''; it.pnombre = '';
+  bulkActualizarFila(i);
+};
+ACT['bulk-cancel'] = function () {
+  (APP.ui.bulkFotos || []).forEach(function (it) { try { URL.revokeObjectURL(it.url); } catch (e) { } });
+  APP.ui.bulkFotos = null;
+  closeModal(null);
+};
+ACT['bulk-save'] = async function () {
+  var items = (APP.ui.bulkFotos || []).filter(function (x) { return x.pid && x.file; });
+  if (!items.length) { toast('Asigna al menos una foto a un producto', 'bad'); return; }
+  closeModal(null);
+  var done = busy('Guardando fotos… 0/' + items.length), ok = 0, fail = 0;
+  try {
+    for (var i = 0; i < items.length; i++) {
+      setBusyText('Guardando fotos… ' + (i + 1) + '/' + items.length);
+      var it = items[i], p = prodById(ST(), it.pid);
+      if (!p) { fail++; continue; }
+      try {
+        var fid = await guardarFoto(it.file, {});
+        p.fotos = p.fotos || [];
+        if (p.fotos.indexOf(fid) < 0) p.fotos.unshift(fid);
+        if (p.fotos.length > 5) p.fotos = p.fotos.slice(0, 5);
+        p.u = Date.now();
+        ok++;
+      } catch (e1) { fail++; }
+    }
+    touch(); save();
+    (APP.ui.bulkFotos || []).forEach(function (it) { try { URL.revokeObjectURL(it.url); } catch (e2) { } });
+    APP.ui.bulkFotos = null;
+    done();
+    toast(ok + ' foto(s) guardada(s)' + (fail ? (' · ' + fail + ' error(es)') : ''), ok ? 'ok' : 'bad', 4500);
+    refresh();
+  } catch (e) {
+    done();
+    toast((e && e.message) || 'Error al guardar', 'bad', 4000);
+  }
+};
+
+
 ACT['ajuste-precios'] = function () {
   var st = ST();
   modal(html`<h2>Ajustar precios</h2><label class="lbl">A qué productos</label><select class="in" id="aj-cat"><option value="">Todos (${st.prods.length})</option>${st.cats.map(function (c) { return html`<option value="${c.id}">${c.n} (${st.prods.filter(function (p) { return p.cat === c.id; }).length})</option>`; })}</select>
@@ -3048,7 +3221,9 @@ async function anuncioTarjeta(st, p, estilo, fmt) {
 /* ---------------- pantalla Compartir ---------------- */
 route(/^\/compartir$/, function () {
   var st = ST(), url = catalogURL(st), fmt = APP.ui.adFmt || 'c', est = APP.ui.adEst || 'grid';
-  var conFoto = st.prods.filter(function (p) { var sk = stockDe(p); return p.vis !== false && p.nombre && p.disp !== false && !(sk !== null && sk <= 0); });
+  var conFoto = st.prods.filter(function (p) { var sk = stockDe(p); return p.vis !== false && p.nombre && p.disp !== false && !(sk !== null && sk <= 0) && p.fotos && p.fotos.length; });
+  var adQ = (APP.ui.adQ || '').trim();
+  var conFotoVista = adQ ? conFoto.filter(function (p) { return norm(p.nombre).indexOf(norm(adQ)) >= 0 || norm(p.sku || '').indexOf(norm(adQ)) >= 0; }) : conFoto;
   var sel = APP.ui.adSel = (APP.ui.adSel || []).filter(function (id) { return conFoto.some(function (p) { return p.id === id; }); });
   if (!sel.length) sel = APP.ui.adSel = conFoto.slice().sort(function (a, b) { return (b.dest ? 2 : 0) + (num(b.ofertaPrecio) > 0 ? 1 : 0) + (b.fotos.length ? 1 : 0) - ((a.dest ? 2 : 0) + (num(a.ofertaPrecio) > 0 ? 1 : 0) + (a.fotos.length ? 1 : 0)); }).slice(0, 4).map(function (p) { return p.id; });
   var body = html`<div class="pg stack">
@@ -3060,7 +3235,9 @@ route(/^\/compartir$/, function () {
       <div class="fl" style="margin-bottom:8px"><button class="${fmt === 'c' ? 'on' : ''}" data-act="ad-fmt" data-v="c">Cuadrada</button><button class="${fmt === 'v' ? 'on' : ''}" data-act="ad-fmt" data-v="v">Vertical (estado)</button></div>
       <div class="fl" style="margin-bottom:8px">${AD_ESTILOS.map(function (e) { return html`<button class="${est === e[0] ? 'on' : ''}" data-act="ad-est" data-v="${e[0]}">${e[1]}</button>`; })}</div>
       <div class="help" style="margin-bottom:6px">1. Elige hasta 6 productos (${sel.length} elegidos)${est === 'grid' ? '' : ' · se crea una imagen por producto'}</div>
-      <div class="card flat" style="max-height:250px;overflow-y:auto">${conFoto.length ? conFoto.map(function (p) { return html`<label class="li" style="cursor:pointer;min-height:54px"><div class="th" style="width:40px;height:40px;flex:0 0 40px">${p.fotos.length ? phImg(p.fotos[0], 't') : iniciales(p.nombre)}</div><div class="tx"><b>${p.nombre}</b></div><input type="checkbox" data-act="ad-pick" data-id="${p.id}" ${sel.indexOf(p.id) >= 0 ? raw('checked') : ''} style="width:22px;height:22px"></label>`; }) : html`<div class="li help">Aún no hay productos publicados.</div>`}</div>
+      <div class="hz" style="margin-bottom:8px;gap:8px"><div class="sp" style="position:relative"><input class="in" id="ad-q" type="search" placeholder="Buscar producto…" value="${adQ}" style="border-radius:12px;padding-left:38px;min-height:42px"><span style="position:absolute;left:12px;top:11px;color:var(--mut)">${ic('search', 18)}</span></div>
+        <button class="btn sm" data-act="ad-clear" ${sel.length ? '' : raw('disabled')} style="flex:0 0 auto">Quitar selección</button></div>
+      <div class="card flat" id="ad-list" style="max-height:280px;overflow-y:auto">${conFotoVista.length ? conFotoVista.map(function (p) { return html`<label class="li" style="cursor:pointer;min-height:54px"><div class="th" style="width:40px;height:40px;flex:0 0 40px">${p.fotos.length ? phImg(p.fotos[0], 't') : iniciales(p.nombre)}</div><div class="tx"><b>${p.nombre}</b></div><input type="checkbox" data-act="ad-pick" data-id="${p.id}" ${sel.indexOf(p.id) >= 0 ? raw('checked') : ''} style="width:22px;height:22px"></label>`; }) : html`<div class="li help">${conFoto.length ? 'Ningún producto coincide con la búsqueda.' : 'Aún no hay productos con foto publicados.'}</div>`}</div>
       <button class="btn pri blk" style="margin-top:12px" data-act="ad-make" ${sel.length ? '' : raw('disabled')}>${ic('wand', 18)}Crear imagen</button><div id="ad-out" class="tc" style="margin-top:12px"></div></div>
     <div class="card"><h2>Catálogo para compartir sin internet</h2><p class="help" style="margin:0 0 10px">Un solo archivo con tus productos y fotos. Se manda por WhatsApp, Telegram o Zapya y se abre sin datos; los pedidos salen por WhatsApp.</p>
       <div class="wr"><button class="btn pri sm" data-act="exp-html">${ic('download', 16)}Crear archivo</button><button class="btn sm" data-act="vista-previa">${ic('eye', 16)}Vista previa</button></div></div>
@@ -3069,9 +3246,20 @@ route(/^\/compartir$/, function () {
     title: 'Compartir', nav: 'share', body: body, after: function () {
       st.flags.compartido = true; save();
       var b = $('#qr-box'); if (b && url) { var c = qrCanvas(url, 420); c.style.width = '210px'; c.style.height = '210px'; b.appendChild(c); }
+      var aq = $('#ad-q');
+      if (aq) {
+        var filtrar = function () {
+          APP.ui.adQ = aq.value; var q = norm(aq.value.trim()), n = 0;
+          $$('#ad-list label.li').forEach(function (l) { var ok = !q || norm(l.textContent).indexOf(q) >= 0; l.style.display = ok ? '' : 'none'; if (ok) n++; });
+          var v = $('#ad-vacio'); if (!v) { v = document.createElement('p'); v.id = 'ad-vacio'; v.className = 'help'; v.style.cssText = 'margin:10px;display:none'; v.textContent = 'Ningún producto coincide.'; $('#ad-list').appendChild(v); }
+          v.style.display = n ? 'none' : 'block';
+        };
+        aq.addEventListener('input', filtrar); if (aq.value) filtrar();
+      }
     }
   };
 });
+ACT['ad-clear'] = function () { APP.ui.adSel = []; save(); refresh(); toast('Selección quitada'); };
 ACT['sh-link'] = function () { var st = ST(), u = catalogURL(st); var CS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Share; if (CS) { CS.share({ title: st.nombre, text: 'Mira el catálogo de ' + st.nombre, url: u, dialogTitle: st.nombre }).catch(function () { }); return; } if (navigator.share) navigator.share({ title: st.nombre, text: 'Mira el catálogo de ' + st.nombre, url: u }).catch(function () { }); else copiar(u); };
 ACT['sh-copy'] = function () { copiar(catalogURL(ST())); };
 ACT['sh-wa'] = function () { var st = ST(); window.open('https://wa.me/?text=' + encodeURIComponent('Mira el catálogo de ' + st.nombre + ': ' + catalogURL(st)), '_blank'); };
@@ -3379,7 +3567,7 @@ async function crearBackup(conFotos) {
     if (data.cfg) {
       if (data.cfg.gh) data.cfg.gh.token = '';
       if (data.cfg.ai) data.cfg.ai.key = '';
-      data.cfg.eltoque = ''; data.cfg.apiKey = ''; data.cfg.imgbb = ''; data.cfg.srvStats = null;
+      data.cfg.eltoque = ''; data.cfg.apiKey = ''; data.cfg.imgbb = ''; data.cfg.srvStats = null; if (data.cfg.fb) data.cfg.fb.pass = '';
     }
   } catch (e) { }
   zip.file('datos.json', JSON.stringify({ app: 'catalogo', v: 1, fecha: Date.now(), data: data }));
@@ -3389,8 +3577,6 @@ async function crearBackup(conFotos) {
     var ids = [];
     try { ids = fotosUsadas(st0); } catch (e1) { ids = []; }
     [st0.logo, st0.portada, st0.espec].forEach(function (x) { if (x && ids.indexOf(x) < 0) ids.push(x); });
-    var MAX = 150;
-    if (ids.length > MAX) ids = ids.slice(0, MAX);
     for (var i = 0; i < ids.length; i++) {
       if (i % 8 === 0) setBusyText('Empaquetando fotos… ' + (i + 1) + '/' + ids.length);
       try {
@@ -3413,7 +3599,7 @@ async function restaurarBackup(file) {
   zip.forEach(function (p) { var m = /^fotos\/(.+)-([gt])\.bin$/.exec(p); if (m) ids[m[1]] = 1; });
   for (var id in ids) { var g = zip.file('fotos/' + id + '-g.bin'), t = zip.file('fotos/' + id + '-t.bin'); var gb = g ? new Blob([await g.async('arraybuffer')], { type: 'image/webp' }) : null, tb = t ? new Blob([await t.async('arraybuffer')], { type: 'image/webp' }) : gb; await fotoPut({ id: id, g: gb, t: tb }); n++; }
   j.data.stores.forEach(function (s) { var i = APP.stores.findIndex(function (x) { return x.id === s.id; }); migrar(s); s.dirty = true; if (i >= 0) APP.stores[i] = s; else APP.stores.push(s); });
-  try { if (j.data.cfg) ['gh', 'srv'].forEach(function (k) { var c = j.data.cfg[k]; if (!c) return; var cur = APP.cfg[k] || (APP.cfg[k] = {}); Object.keys(c).forEach(function (f) { if (!cur[f]) cur[f] = c[f]; }); }); } catch (e) { }
+  try { if (j.data.cfg) ['gh', 'srv', 'fb'].forEach(function (k) { var c = j.data.cfg[k]; if (!c) return; var cur = APP.cfg[k] || (APP.cfg[k] = {}); Object.keys(c).forEach(function (f) { if (!cur[f]) cur[f] = c[f]; }); }); } catch (e) { }
   if (!APP.cur && APP.stores[0]) APP.cur = APP.stores[0].id; save(true); return { tiendas: j.data.stores.length, fotos: n };
 }
 
@@ -3677,6 +3863,7 @@ publicar = async function (st, o) {
     var S = st.sitio || {}; Object.keys(S).forEach(function (k) { if (S[k] !== '' && S[k] != null) setPath(base, k, S[k]); });
     if (st.portada && P(st.portada)) setPath(base, 'portada.fotos', [P(st.portada)]);
     if (st.espec && P(st.espec)) setPath(base, 'especialidades.foto', P(st.espec));
+    if (APP.cfg.fb && APP.cfg.fb.url && st.slug) setPath(base, 'firebase', { url: String(APP.cfg.fb.url).replace(/\/+$/, ''), slug: st.slug });
     var oc = {}; (base.categorias || []).forEach(function (x) { oc[x.id] = x; });
     base.categorias = st.cats.map(function (x) { return { id: x.id, nombre: x.n, icono: (oc[x.id] || {}).icono || 'caja' }; });
     var op = {}; (base.productos || []).forEach(function (x) { op[x.id] = x; }); var top = {}; st.prods.filter(function (q) { return +q.vend >= 1; }).sort(function (a, b) { return b.vend - a.vend; }).slice(0, 24).forEach(function (q) { top[q.id] = 1; }); var hoy = ahoraHabana().fecha;
@@ -3792,6 +3979,13 @@ ROUTES.unshift([/^\/conexion$/, function () {
     <label class="lbl">Dirección del servidor</label><input class="in" data-f="srv.url" value="${sv.url}" placeholder="http://192.168.1.5:8080" autocapitalize="none">
     <label class="lbl">Días para contar ventas</label><input class="in" type="number" data-f="srv.dias" value="${sv.dias}">
     <div class="wr" style="margin-top:10px"><button class="btn pri sm" data-act="srv-test">Probar</button><button class="btn sm" data-act="srv-sync">Traer stock y ventas</button></div></div>
+    <div class="card"><h2>Pedidos y visitas (Firebase)</h2><p class="help" style="margin:0 0 6px">Los pedidos de WhatsApp y las visitas de tu web llegan solos al panel. Crea un proyecto en Firebase con Realtime Database y Authentication (correo y contraseña), y crea ahí tu usuario.</p>
+      <label class="lbl">Dirección de la base de datos</label><input class="in" data-f="fb.url" value="${(c.fb || {}).url || ''}" placeholder="https://tu-proyecto-default-rtdb.firebaseio.com" autocapitalize="none">
+      <label class="lbl">Clave de API web</label><input class="in" data-f="fb.key" value="${(c.fb || {}).key || ''}" placeholder="AIza…" autocapitalize="none">
+      <label class="lbl">Correo de tu usuario</label><input class="in" data-f="fb.email" value="${(c.fb || {}).email || ''}" autocapitalize="none">
+      <label class="lbl">Contraseña</label><input class="in" type="password" data-f="fb.pass" value="${(c.fb || {}).pass || ''}" autocapitalize="none">
+      <div class="wr" style="margin-top:10px"><button class="btn pri sm" data-act="fb-test">Probar y traer</button><button class="btn sm" data-act="fb-reglas">Copiar reglas</button></div>
+      <p class="help" style="margin:8px 0 0">Pega las reglas en Realtime Database → Reglas → Publicar. Después publica el catálogo para que la web empiece a enviar pedidos y visitas.</p></div>
     <div class="card"><h2>IA gratis (descripciones y fotos)</h2><p class="help" style="margin:0 0 6px">El botón «Generar» del producto escribe la descripción. Si el producto tiene foto, la IA la mira; si aún no tiene nombre, también lo propone.</p>
       <label class="lbl">Servicio</label><select class="in" data-f="ai.prov"><option value="pollinations" ${c.ai.prov === 'pollinations' ? raw('selected') : ''}>Gratis, sin clave (Pollinations)</option><option value="gemini" ${c.ai.prov === 'gemini' ? raw('selected') : ''}>Google Gemini (clave gratis)</option><option value="anthropic" ${c.ai.prov === 'anthropic' ? raw('selected') : ''}>Anthropic Claude (de pago)</option><option value="" ${!c.ai.prov ? raw('selected') : ''}>Ninguno (plantillas locales)</option></select>
       ${c.ai.prov === 'gemini' || c.ai.prov === 'anthropic' ? html`<label class="lbl">Clave de API</label><input class="in" data-f="ai.key" value="${c.ai.key}" autocapitalize="none" placeholder="${c.ai.prov === 'gemini' ? 'Gratis en aistudio.google.com/apikey' : 'sk-ant-…'}"><label class="lbl">Modelo (opcional)</label><input class="in" data-f="ai.model" value="${c.ai.model}" placeholder="${c.ai.prov === 'anthropic' ? 'claude-haiku-5-5' : 'gemini-flash-latest'}" autocapitalize="none">` : ''}
@@ -3811,7 +4005,7 @@ ACT['gh-import'] = async function () { if (!confirm('Se reemplazarán los datos 
 (function () {
   function fecha(t) { return t ? new Date(t).toLocaleString('es', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'nunca'; }
   function snapDB() { return new Promise(function (res, rej) { var r = indexedDB.open('catalogo-snap', 1); r.onupgradeneeded = function () { r.result.createObjectStore('s', { keyPath: 't' }); }; r.onsuccess = function () { res(r.result); }; r.onerror = function () { rej(r.error); }; }); }
-  function sinSecretos(d) { d.auth = null; if (d.cfg) { if (d.cfg.gh) d.cfg.gh.token = ''; if (d.cfg.ai) d.cfg.ai.key = ''; d.cfg.eltoque = ''; d.cfg.apiKey = ''; d.cfg.imgbb = ''; d.cfg.srvStats = null; } return d; }
+  function sinSecretos(d) { d.auth = null; if (d.cfg) { if (d.cfg.gh) d.cfg.gh.token = ''; if (d.cfg.ai) d.cfg.ai.key = ''; d.cfg.eltoque = ''; d.cfg.apiKey = ''; d.cfg.imgbb = ''; d.cfg.srvStats = null; if (d.cfg.fb) d.cfg.fb.pass = ''; } return d; }
   async function snapGuardar(forzar) {
     try {
       var now = Date.now(); if (forzar !== true && now - (APP.cfg.lastSnap || 0) < 6 * 36e5) return;
@@ -3875,6 +4069,68 @@ ACT['gh-import'] = async function () { if (!confirm('Se reemplazarán los datos 
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) { }
   setTimeout(snapGuardar, 4000); document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden') snapGuardar(); });
   window.panelBk = { snapGuardar: snapGuardar, snapLista: snapLista };
+})();
+</script>
+<script>
+/* ===== Pedidos y visitas desde la web (Firebase Realtime Database, REST) ===== */
+(function () {
+  function cfg() { return APP.cfg.fb || {}; }
+  function listo() { var c = cfg(); return !!(c.url && c.key && c.email && c.pass); }
+  var TK = null;
+  async function fbToken() {
+    var c = cfg(); if (TK && TK.k === c.key + c.email + c.pass && Date.now() < TK.exp - 60000) return TK.t;
+    var r; try { r = await fetchT('https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=' + encodeURIComponent(c.key), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: c.email, password: c.pass, returnSecureToken: true }) }); }
+    catch (e) { throw new Error('No hay conexión con Firebase.'); }
+    var j = await r.json().catch(function () { return {}; });
+    if (!r.ok) { var m = String((j.error && j.error.message) || '').split(' ')[0]; throw new Error(/INVALID|EMAIL_NOT_FOUND|PASSWORD/.test(m) ? 'Correo o contraseña de Firebase incorrectos.' : m === 'OPERATION_NOT_ALLOWED' ? 'En Firebase activa «Correo y contraseña» en Authentication.' : 'Error de Firebase: ' + (m || r.status)); }
+    TK = { t: j.idToken, exp: Date.now() + (+j.expiresIn || 3600) * 1000, k: c.key + c.email + c.pass }; return TK.t;
+  }
+  async function fbGet(path) {
+    var t = await fbToken(), r; try { r = await fetchT(String(cfg().url).replace(/\/+$/, '') + '/' + path + '.json?auth=' + encodeURIComponent(t), {}, 25000); } catch (e) { throw new Error('Sin conexión con la base de datos.'); }
+    if (r.status === 401 || r.status === 403) throw new Error('Sin permiso: pega las reglas en Firebase (Copiar reglas) y publícalas.');
+    if (!r.ok) throw new Error('Error de la base de datos (' + r.status + ').'); return r.json();
+  }
+  var ultimo = 0;
+  async function sync() {
+    var st = ST(); if (!st || !listo()) return { n: 0 };
+    if (!st.slug) throw new Error('Tu tienda aún no tiene dirección (slug). Publica el catálogo primero.');
+    var ped = await fbGet('pedidos/' + encodeURIComponent(st.slug)) || {}, vis = await fbGet('visitas/' + encodeURIComponent(st.slug)) || {}, n = 0;
+    st.vis = vis;
+    Object.keys(ped).forEach(function (k) {
+      var rec = ped[k]; if (!rec || typeof rec.txt !== 'string') return;
+      leerPedidosWA(st, rec.txt).forEach(function (o) { if (!st.pedidos.some(function (x) { return x.c === o.c; })) { st.pedidos.push(o); n++; } });
+    });
+    st.pedidos.sort(function (a, b) { return a.c < b.c ? 1 : -1; }); ultimo = Date.now(); save(true); return { n: n };
+  }
+  window.fbListo = listo;
+  window.fbVisitas = function (st, dias) {
+    var v = st.vis || {}, lim = new Date(Date.now() - (dias - 1) * 864e5), d = lim.getFullYear() + '-' + String(lim.getMonth() + 1).padStart(2, '0') + '-' + String(lim.getDate()).padStart(2, '0'), t = 0;
+    Object.keys(v).forEach(function (k) { if (k >= d) t += num(v[k]); }); return t;
+  };
+  var orig = ACT['ped-sync'];
+  ACT['ped-sync'] = async function () {
+    if (listo()) {
+      var done = busy('Buscando pedidos…');
+      try { var r = await sync(); done(); toast(r.n ? r.n + (r.n === 1 ? ' pedido nuevo' : ' pedidos nuevos') : 'No hay pedidos nuevos'); refresh(); return; }
+      catch (e) { done(); toast(e.message, 'bad', 5000); }
+    }
+    return orig.apply(this, arguments);
+  };
+  ACT['fb-test'] = async function () {
+    var done = busy('Probando…');
+    try { var r = await sync(); done(); toast('Conectado ✓ · ' + r.n + ' pedido(s) nuevo(s)', '', 4000); refresh(); } catch (e) { done(); toast(e.message, 'bad', 5500); }
+  };
+  ACT['fb-reglas'] = function () {
+    var em = (cfg().email || 'TU_CORREO').replace(/'/g, ''), ok = "auth != null && auth.token.email === '" + em + "'";
+    var r = { rules: { '.read': false, '.write': false,
+      visitas: { $slug: { '.read': ok, $dia: { '.write': true, '.validate': "newData.isNumber() && newData.val() === (data.exists() ? data.val() : 0) + 1" } } },
+      pedidos: { $slug: { '.read': ok, $cod: { '.write': '!data.exists() && newData.exists()', '.validate': "newData.hasChildren(['t','txt']) && newData.child('t').isNumber() && newData.child('txt').isString() && newData.child('txt').val().length < 6000" } } } } };
+    copiar(JSON.stringify(r, null, 2));
+  };
+  document.addEventListener('change', function (e) { var f = e.target.getAttribute && e.target.getAttribute('data-f'); if (f && f.indexOf('fb.') === 0) { TK = null; touch(); } });
+  function auto() { if (!listo() || !ST() || Date.now() - ultimo < 120000) return; sync().then(function (r) { if (r.n) toast(r.n + (r.n === 1 ? ' pedido nuevo' : ' pedidos nuevos')); if (/^#?\/?(pedidos)?$/.test(location.hash)) refresh(); }).catch(function () { }); }
+  setTimeout(auto, 4000);
+  document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') auto(); });
 })();
 </script>
 </body>
