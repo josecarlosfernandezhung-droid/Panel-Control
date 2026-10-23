@@ -20,6 +20,7 @@ jobs:
         run: sed -i 's/<application/<application android:usesCleartextTraffic="true"/' android/app/src/main/AndroidManifest.xml && grep -n usesCleartextTraffic android/app/src/main/AndroidManifest.xml
       - name: Icono de la app
         run: |
+          sudo apt-get update && sudo apt-get install -y imagemagick
           for d in mdpi:48 hdpi:72 xhdpi:96 xxhdpi:144 xxxhdpi:192; do
             n=${d%%:*}; s=${d##*:}
             convert icon.png -resize ${s}x${s} android/app/src/main/res/mipmap-$n/ic_launcher.png
@@ -44,3 +45,4 @@ jobs:
         with:
           name: Catalogo-de-Productos-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
+          
