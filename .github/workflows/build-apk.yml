@@ -16,11 +16,8 @@ jobs:
         run: npm install
       - name: Crear proyecto Android
         run: npx cap add android
-      
-      # <-- AQUÍ AGREGAMOS LA INSTALACIÓN DE IMAGEMAGICK -->
-      - name: Instalar ImageMagick
-        run: sudo apt-get update && sudo apt-get install -y imagemagick
-
+      - name: Permitir conexion al servidor de pedidos (http en la red local)
+        run: sed -i 's/<application/<application android:usesCleartextTraffic="true"/' android/app/src/main/AndroidManifest.xml && grep -n usesCleartextTraffic android/app/src/main/AndroidManifest.xml
       - name: Icono de la app
         run: |
           for d in mdpi:48 hdpi:72 xhdpi:96 xxhdpi:144 xxxhdpi:192; do
@@ -47,4 +44,3 @@ jobs:
         with:
           name: Catalogo-de-Productos-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
-          
