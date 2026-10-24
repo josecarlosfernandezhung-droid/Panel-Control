@@ -64,6 +64,15 @@ select.in{padding-right:8px}
 .li:last-child{border-bottom:0}
 .li .th{width:50px;height:50px;border-radius:12px;background:var(--soft);flex:0 0 50px;overflow:hidden;margin-right:12px;display:flex;align-items:center;justify-content:center;color:var(--b);font-weight:800}
 .li .th img{width:100%;height:100%;object-fit:cover}
+.li .th[data-act]{cursor:zoom-in}
+#vfoto{position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.92);display:flex;flex-direction:column}
+#vfoto .vf-tira{flex:1;display:flex;overflow-x:auto;scroll-snap-type:x mandatory;min-height:0;scrollbar-width:none}
+#vfoto .vf-tira::-webkit-scrollbar{display:none}
+#vfoto .vf-i{flex:0 0 100%;scroll-snap-align:center;display:flex;align-items:center;justify-content:center;padding:56px 8px 8px}
+#vfoto .vf-i img{max-width:100%;max-height:100%;object-fit:contain;border-radius:6px}
+#vfoto .vf-x{position:absolute;top:calc(8px + env(safe-area-inset-top,0px));right:10px;width:44px;height:44px;border-radius:50%;border:0;background:rgba(255,255,255,.16);color:#fff;font-size:30px;line-height:1;z-index:2}
+#vfoto .vf-n{position:absolute;top:calc(18px + env(safe-area-inset-top,0px));left:16px;color:#fff;font-weight:700;font-size:14px;background:rgba(255,255,255,.16);padding:4px 10px;border-radius:99px}
+#vfoto .vf-t{color:#fff;text-align:center;padding:8px 16px calc(14px + env(safe-area-inset-bottom,0px));font-weight:600;font-size:15px}
 .lgo{background:#fff;border-radius:14px;overflow:hidden;display:flex;align-items:center;justify-content:center;color:var(--b);font-weight:800}
 .lgo img{width:100%;height:100%;object-fit:contain}
 .li .tx{flex:1;min-width:0}
@@ -2547,9 +2556,22 @@ function listaProductos(st) {
     return true;
   });
 }
+/* Visor de fotos: al tocar la miniatura se ve la foto grande (si el producto tiene varias, se deslizan de lado). Tocar fuera o la X lo cierra. */
+ACT['foto-ver'] = function (el) {
+  var st = ST(), p = st && st.prods.filter(function (x) { return x.id === el.getAttribute('data-id'); })[0];
+  if (!p || !p.fotos.length) return;
+  var v = document.getElementById('vfoto'); if (v) v.remove();
+  v = document.createElement('div'); v.id = 'vfoto';
+  v.innerHTML = '<button class="vf-x" aria-label="Cerrar">&times;</button><div class="vf-tira">' + p.fotos.map(function (id) { return '<div class="vf-i"><img data-ph="' + esc(id) + '" data-sz="g" alt=""></div>'; }).join('') + '</div>' + (p.fotos.length > 1 ? '<div class="vf-n">1 / ' + p.fotos.length + '</div>' : '') + '<div class="vf-t">' + esc(p.nombre) + '</div>';
+  document.body.appendChild(v); hydrate(v);
+  var tira = v.querySelector('.vf-tira'), n = v.querySelector('.vf-n');
+  if (n) tira.addEventListener('scroll', function () { n.textContent = (Math.round(tira.scrollLeft / tira.clientWidth) + 1) + ' / ' + p.fotos.length; });
+  v.addEventListener('click', function (e) { if (e.target.tagName !== 'IMG') v.remove(); });
+  window.addEventListener('hashchange', function cerrar() { var q = document.getElementById('vfoto'); if (q) q.remove(); window.removeEventListener('hashchange', cerrar); });
+};
 function filaProducto(st, p, idx, reorden, total) {
   var s = stockDe(p), cur = monedaDe(st, p);
-  return html`<div class="li" data-pid="${p.id}"><div class="th">${p.fotos.length ? phImg(p.fotos[0], 't') : iniciales(p.nombre)}</div>
+  return html`<div class="li" data-pid="${p.id}"><div class="th" ${p.fotos.length ? raw('data-act="foto-ver" data-id="' + esc(p.id) + '"') : ''}>${p.fotos.length ? phImg(p.fotos[0], 't') : iniciales(p.nombre)}</div>
     <a class="tx tap" style="text-decoration:none;color:inherit" href="#/productos/${p.id}"><b>${p.nombre}</b><span>${num(p.precio) > 0 ? fmtMoney(num(p.precio), cur) : 'A consultar'}${p.cat ? ' · ' + catName(st, p.cat) : ''}${s !== null ? ' · ' + s + ' uds' : ''}</span></a>
     ${reorden ? html`<button class="ib2" data-act="p-up" data-id="${p.id}" ${idx === 0 ? raw('disabled') : ''} aria-label="Subir">${ic('up', 18)}</button><button class="ib2" data-act="p-down" data-id="${p.id}" ${idx === total - 1 ? raw('disabled') : ''} aria-label="Bajar">${ic('down', 18)}</button>` : ''}
     <label class="sw" style="margin-left:6px"><input type="checkbox" data-act="p-vis" data-id="${p.id}" ${p.vis !== false ? raw('checked') : ''} aria-label="Mostrar en el catálogo"><i></i></label></div>`;
