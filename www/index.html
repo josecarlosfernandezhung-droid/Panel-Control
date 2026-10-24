@@ -2030,6 +2030,38 @@ async function enZipUnico(blob, nombreDentro) {
   return zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
 }
 
+/* Compartir / guardar VARIOS archivos de una sola vez: Web Share → Capacitor (una sola hoja de compartir con todos) → ZIP */
+async function guardarVarios(blobs, base, titulo, alListo) {
+  var C = window.Capacitor && window.Capacitor.Plugins, n = blobs.length, nombres = blobs.map(function (b, i) { return base + '-' + (i + 1) + '.jpg'; });
+  try {
+    var fs = blobs.map(function (b, i) { return new File([b], nombres[i], { type: b.type || 'image/jpeg' }); });
+    if (navigator.canShare && navigator.canShare({ files: fs })) { if (alListo) alListo(); await navigator.share({ files: fs, title: titulo }); return 'compartido'; }
+  } catch (e) { if (e && (e.name === 'AbortError' || /cancel/i.test(String(e.message || e)))) return 'cancelado'; }
+  if (C && C.Filesystem && C.Share) {
+    try {
+      var uris = [];
+      for (var i = 0; i < n; i++) {
+        setBusyText('Preparando ' + (i + 1) + ' de ' + n + '…');
+        try { await C.Filesystem.deleteFile({ path: nombres[i], directory: 'CACHE' }); } catch (de) { }
+        var w = await C.Filesystem.writeFile({ path: nombres[i], data: await blobAB64(blobs[i]), directory: 'CACHE' });
+        uris.push(w.uri);
+        await new Promise(function (rs) { setTimeout(rs, 0); });
+      }
+      if (alListo) alListo();
+      await C.Share.share({ title: titulo, files: uris, dialogTitle: titulo });
+      return 'compartido';
+    } catch (e2) { if (e2 && /cancel/i.test(String(e2.message || e2))) return 'cancelado'; }
+  }
+  /* respaldo: un solo ZIP con todas las imágenes */
+  return guardarZip(blobs, base, titulo, alListo, nombres);
+}
+async function guardarZip(blobs, base, titulo, alListo, nombres) {
+  var Z = await jszip(), zip = new Z();
+  blobs.forEach(function (b, i) { zip.file(nombres ? nombres[i] : (base + '-' + (i + 1) + '.jpg'), b); });
+  var zb = await zip.generateAsync({ type: 'blob', compression: 'STORE' });
+  if (alListo) alListo();
+  return guardarArchivo(zb, base + '.zip', titulo);
+}
 async function guardarArchivo(blob, nombre, titulo) {
   var C = window.Capacitor && window.Capacitor.Plugins;
   var grande = blob && blob.size > 12 * 1048576;
@@ -2449,6 +2481,8 @@ route(/^\/$/, function () {
       <div class="sp"><div class="bold" style="font-size:18px">${st.nombre}</div><div class="help">${url ? url.replace(/^https?:\/\//, '') : 'Sin dirección pública aún'}</div></div></div>
       <div class="hz" style="margin-top:12px"><span class="chip ${st.cierre ? 'bad' : est.abierto ? 'ok' : 'gray'}">${st.cierre ? 'Cerrada temporalmente' : est.abierto === true ? 'Abierta' : est.abierto === false ? 'Cerrada ahora' : 'Abierta'}</span><span class="sp"></span>
       <label class="hz" style="color:#fff;font-size:13px">Cierre temporal&nbsp;<label class="sw"><input type="checkbox" data-act="cierre" ${st.cierre ? raw('checked') : ''}><i></i></label></label></div>
+      <div class="hz" style="margin-top:10px"><span class="sp"></span>
+      <label class="hz" style="color:#fff;font-size:13px">Ocultar agotados en la web&nbsp;<label class="sw"><input type="checkbox" data-act="ocag" ${st.ocAg ? raw('checked') : ''}><i></i></label></label></div>
     </div>
     ${bannerPublicar(st)}
     ${nuevos ? html`<a class="banner warn" style="display:block;text-decoration:none;color:#7a4a00" href="#/pedidos"><b>${nuevos} pedido${nuevos === 1 ? '' : 's'} nuevo${nuevos === 1 ? '' : 's'}</b> · toca para verlos</a>` : ''}
@@ -2478,6 +2512,9 @@ ACT.rango = function (el) { APP.ui.rango = +el.getAttribute('data-d'); save(); r
 ACT.cierre = function (el) {
   var st = ST(); st.cierre = el.checked; touch(st); toast(st.cierre ? 'Tienda cerrada temporalmente (publica para aplicarlo)' : 'Tienda abierta de nuevo (publica para aplicarlo)'); refresh();
 };
+ACT.ocag = function (el) {
+  var st = ST(); st.ocAg = el.checked; touch(st); toast(st.ocAg ? 'Los agotados se ocultarán en la web (publica para aplicarlo)' : 'Los agotados volverán a verse en la web (publica para aplicarlo)'); refresh();
+};
 ACT.publicar = async function () {
   var st = ST(), bad = puedePublicar(st);
   if (bad) { toast(bad, 'bad', 4500); if (!hayNube() || !logged()) go('/conexion'); return; }
@@ -2487,6 +2524,8 @@ ACT.publicar = async function () {
 };
 
 /* ---------------- Productos ---------------- */
+/* llegó (o volvió a tener cantidad) en la última lectura del servidor que trajo novedades, y hoy tiene cantidad */
+function esLlegado(st, p) { var sd = stockDe(p); return !!(st.srvLote && p.llego === st.srvLote && p.disp !== false && !(sd !== null && sd <= 0)); }
 function filtroProd() { var f = APP.ui.pf = APP.ui.pf || { q: '', f: 'publicados', cat: '', n: 60 }; return f; }
 function listaProductos(st) {
   var f = filtroProd(), toks = norm(f.q).split(' ').filter(Boolean);
@@ -2496,6 +2535,9 @@ function listaProductos(st) {
     if (f.f === 'publicados' && p.vis === false) return false;
     if (f.f === 'ocultos' && p.vis !== false) return false;
     if (f.f === 'agotados' && !(!p.disp || (s !== null && s <= 0))) return false;
+    if (f.f === 'disponibles' && (!p.disp || (s !== null && s <= 0))) return false;
+    if (f.f === 'llegaron' && !esLlegado(st, p)) return false;
+    if (f.f === 'llegaronsf' && !(esLlegado(st, p) && !p.fotos.length && !p.fotoWeb)) return false;
     if (f.f === 'destacados' && !p.dest) return false;
     if (f.f === 'sinfoto' && p.fotos.length) return false;
     if (f.f === 'bajo' && !(s !== null && s <= num(st.umbral))) return false;
@@ -2524,8 +2566,8 @@ function renderListaProductos() {
 }
 route(/^\/productos$/, function () {
   var st = ST(), f = filtroProd(), cnt = function (fn) { return st.prods.filter(fn).length; };
-  var CN = { publicados: cnt(function (p) { return p.vis !== false; }), ocultos: cnt(function (p) { return p.vis === false; }) };
-  var chips = [['todos', 'Todos'], ['publicados', 'Publicados'], ['ocultos', 'Ocultos'], ['agotados', 'Agotados'], ['bajo', 'Poco stock'], ['destacados', 'Destacados'], ['oferta', 'Ofertas'], ['sinfoto', 'Sin foto']];
+  var CN = { publicados: cnt(function (p) { return p.vis !== false; }), ocultos: cnt(function (p) { return p.vis === false; }), disponibles: cnt(function (p) { var sd = stockDe(p); return !(!p.disp || (sd !== null && sd <= 0)); }), llegaron: cnt(function (p) { return esLlegado(st, p); }), llegaronsf: cnt(function (p) { return esLlegado(st, p) && !p.fotos.length && !p.fotoWeb; }) };
+  var chips = [['todos', 'Todos'], ['publicados', 'Publicados'], ['disponibles', 'Disponibles'], ['llegaron', 'Llegaron'], ['llegaronsf', 'Llegaron sin foto'], ['ocultos', 'Ocultos'], ['agotados', 'Agotados'], ['bajo', 'Poco stock'], ['destacados', 'Destacados'], ['oferta', 'Ofertas'], ['sinfoto', 'Sin foto']];
   var body = html`<div class="pg stack" style="padding-bottom:12px">
     <div class="hz"><div class="sp" style="position:relative"><input class="in" id="p-q" type="search" placeholder="Buscar producto" value="${f.q}" style="border-radius:99px;padding-left:40px"><span style="position:absolute;left:12px;top:12px;color:var(--mut)">${ic('search', 20)}</span></div></div>
     <div class="fl">${chips.map(function (c) { return html`<button class="${f.f === c[0] ? 'on' : ''}" data-act="p-filtro" data-v="${c[0]}">${c[1]}${CN[c[0]] != null ? ' (' + CN[c[0]] + ')' : ''}</button>`; })}</div>
@@ -2588,6 +2630,7 @@ function bulkBuscarProductos(q) {
   for (var i = 0; i < list.length; i++) {
     var p = list[i];
     if (!p.nombre) continue;
+    if (APP.ui.bulkDisp) { var sdp = stockDe(p); if (!p.disp || (sdp !== null && sdp <= 0)) continue; }
     var pn = norm(p.nombre), sk = norm(p.sku || '');
     var score = 9999;
     if (pn === qn || sk === qn) score = 0;
@@ -2612,7 +2655,7 @@ function bulkSugHTML(idx, it) {
   }
   var list = bulkBuscarProductos(it.q);
   if (!list.length) {
-    return (it.q && it.q.trim()) ? '<p class="help" style="margin:8px 0 0">Ningún producto coincide con «' + esc(it.q) + '».</p>' : '';
+    return (it.q && it.q.trim()) ? '<p class="help" style="margin:8px 0 0">Ningún producto coincide con «' + esc(it.q) + '».' + (APP.ui.bulkDisp ? ' (Solo disponibles está activado.)' : '') + '</p>' : '';
   }
   return '<div style="margin-top:8px;display:flex;flex-direction:column;gap:6px">' + list.map(function (p) {
     var tiene = p.fotos && p.fotos.length;
@@ -2636,11 +2679,13 @@ function abrirModalBulkFotos() {
   var items = APP.ui.bulkFotos || [];
   if (!items.length) return;
   var rows = items.map(function (it, idx) {
-    return '<div class="card" style="margin:0 0 10px;padding:10px"><div class="hz" style="align-items:flex-start;gap:10px"><div class="th" style="width:64px;height:64px;flex:0 0 64px;border-radius:10px;overflow:hidden;background:var(--soft)"><img src="' + it.url + '" alt="" style="width:100%;height:100%;object-fit:cover"></div><div class="sp" style="min-width:0;width:100%"><div class="help" style="margin:0 0 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(it.name) + '</div><input class="in bulk-q" data-i="' + idx + '" type="search" placeholder="Buscar producto para esta foto…" value="' + esc(it.q) + '" autocomplete="off" style="min-height:42px"><div data-bulk-sug="' + idx + '">' + bulkSugHTML(idx, it) + '</div></div></div></div>';
+    return '<div class="card" style="margin:0 0 10px;padding:10px"><div class="hz" style="align-items:flex-start;gap:10px"><div class="th" data-act="bulk-zoom" data-i="' + idx + '" style="cursor:zoom-in;width:64px;height:64px;flex:0 0 64px;border-radius:10px;overflow:hidden;background:var(--soft)"><img src="' + it.url + '" alt="" style="width:100%;height:100%;object-fit:cover"></div><div class="sp" style="min-width:0;width:100%"><div class="help" style="margin:0 0 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(it.name) + '</div><input class="in bulk-q" data-i="' + idx + '" type="search" placeholder="Buscar producto para esta foto…" value="' + esc(it.q) + '" autocomplete="off" style="min-height:42px"><div data-bulk-sug="' + idx + '">' + bulkSugHTML(idx, it) + '</div></div></div></div>';
   }).join('');
   var nAsig = items.filter(function (x) { return x.pid; }).length;
+  var swd = '<label class="hz" style="margin:0 0 12px"><span class="sp">Solo productos disponibles</span><label class="sw"><input type="checkbox" data-act="bulk-disp" ' + (APP.ui.bulkDisp ? 'checked' : '') + '><i></i></label></label>';
   modal(html`<h2>Asignar fotos a productos</h2>
-    <p class="help" style="margin:0 0 12px">${items.length} foto(s). Escribe el nombre del producto en cada foto, elige de la lista y pulsa Guardar.</p>
+    <p class="help" style="margin:0 0 12px">${items.length} foto(s). Escribe el nombre del producto en cada foto, elige de la lista y pulsa Guardar. Toca una miniatura para verla en grande.</p>
+    ${raw(swd)}
     <div id="bulk-list" style="max-height:55vh;overflow-y:auto;margin:0 -4px;padding:0 4px">${raw(rows)}</div>
     <div class="wr" style="margin-top:14px">
       <button type="button" class="btn sm" data-act="bulk-cancel">Cancelar</button>
@@ -2669,6 +2714,20 @@ ACT['bulk-assign'] = function (el) {
   var inp = $('#md input.bulk-q[data-i="' + i + '"]');
   if (inp) inp.value = p.nombre;
   bulkActualizarFila(i);
+};
+ACT['bulk-disp'] = function (el) {
+  APP.ui.bulkDisp = !!el.checked; save();
+  (APP.ui.bulkFotos || []).forEach(function (it, i) { bulkActualizarFila(i); });
+};
+ACT['bulk-zoom'] = function (el) {
+  var it = (APP.ui.bulkFotos || [])[+el.getAttribute('data-i')];
+  if (!it) return;
+  var old = document.getElementById('zoomf'); if (old) old.remove();
+  var o = document.createElement('div'); o.id = 'zoomf';
+  o.style.cssText = 'position:absolute;left:0;top:0;right:0;bottom:0;background:rgba(0,0,0,.93);z-index:70;display:flex;align-items:center;justify-content:center;padding:10px;flex-direction:column;gap:8px';
+  o.innerHTML = '<img src="' + it.url + '" alt="" style="max-width:100%;max-height:88%;object-fit:contain;touch-action:pinch-zoom"><div style="color:#fff;font-size:13px;opacity:.85">' + esc(it.name || '') + ' · toca para cerrar</div>';
+  o.addEventListener('click', function () { o.remove(); });
+  var host = $('#mo') ? $('#mo').parentNode : document.body; host.appendChild(o);
 };
 ACT['bulk-unassign'] = function (el) {
   var i = +el.getAttribute('data-i');
@@ -3189,6 +3248,45 @@ async function anuncioCanvas(st, prods, fmt) {
   return cv;
 }
 
+/* ---------- hoja grande: muchas tarjetas de productos en una sola imagen alta ---------- */
+async function anuncioHoja(st, prods, hn, tot) {
+  var W = 1080, cols = 3, n = prods.length, rows = Math.ceil(n / cols), gx = 50, gap = 24;
+  var cw = Math.floor((W - 2 * gx - gap * (cols - 1)) / cols), ch = 440, hy = 44, lh = 110, top = hy + lh + 36, footH = 230;
+  var H = top + rows * (ch + gap) - gap + 30 + footH, cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+  var cx = cv.getContext('2d'), col = st.color || '#0a7c86', on = colorOn(col), F = 'system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif';
+  var g = cx.createLinearGradient(0, 0, W, H); g.addColorStop(0, col); g.addColorStop(1, mezclar(col, .5, '#000')); cx.fillStyle = g; cx.fillRect(0, 0, W, H);
+  var lx = 50, logo = st.logo ? await bitmapFoto(st.logo) : null;
+  cx.save(); rrect(cx, lx, hy, lh, lh, 28); cx.clip(); cx.fillStyle = '#fff'; cx.fillRect(lx, hy, lh, lh);
+  if (logo) { var kl = Math.min(lh / logo.width, lh / logo.height), lw2 = logo.width * kl, lh2 = logo.height * kl; cx.drawImage(logo, lx + (lh - lw2) / 2, hy + (lh - lh2) / 2, lw2, lh2); } else { cx.fillStyle = col; cx.font = '800 ' + Math.round(lh * .4) + 'px ' + F; cx.textAlign = 'center'; cx.textBaseline = 'middle'; cx.fillText(iniciales(st.nombre), lx + lh / 2, hy + lh / 2 + 3); }
+  cx.restore(); if (logo && logo.close) logo.close();
+  cx.textAlign = 'left'; cx.textBaseline = 'alphabetic'; cx.fillStyle = on; cx.font = '800 50px ' + F;
+  var nl = wrapText(cx, st.nombre, W - lx - lh - 40 - 50 - (tot > 1 ? 150 : 0), 2); nl.forEach(function (l, i) { cx.fillText(l, lx + lh + 28, hy + 52 + i * 58); });
+  if (tot > 1) { cx.textAlign = 'right'; cx.font = '600 28px ' + F; cx.globalAlpha = .85; cx.fillText(hn + ' / ' + tot, W - 50, hy + 44); cx.globalAlpha = 1; cx.textAlign = 'left'; }
+  var fontN = 27, fontP = 34;
+  for (var i = 0; i < n; i++) {
+    var p = prods[i], r = Math.floor(i / cols), c = i % cols, rowN = (r === rows - 1) ? (n - r * cols) : cols;
+    var offX = (cols - rowN) * (cw + gap) / 2, x = gx + c * (cw + gap) + offX, y = top + r * (ch + gap);
+    cx.save(); rrect(cx, x, y, cw, ch, 26); cx.fillStyle = '#fff'; cx.fill(); cx.clip();
+    var th = Math.round(ch * .62), im = p.fotos[0] ? await bitmapFoto(p.fotos[0]) : null;
+    cx.fillStyle = '#e8eef0'; cx.fillRect(x, y, cw, th);
+    if (im) { var k = Math.max(cw / im.width, th / im.height), sw = cw / k, sh = th / k; cx.drawImage(im, (im.width - sw) / 2, (im.height - sh) / 2, sw, sh, x, y, cw, th); if (im.close) im.close(); }
+    else { cx.fillStyle = col; cx.globalAlpha = .35; cx.font = '800 64px ' + F; cx.textAlign = 'center'; cx.textBaseline = 'middle'; cx.fillText(iniciales(p.nombre), x + cw / 2, y + th / 2); cx.globalAlpha = 1; }
+    var pa = precioAnuncio(st, p);
+    if (pa.old) { cx.fillStyle = '#e11d48'; rrect(cx, x + 14, y + 14, 112, 42, 21); cx.fill(); cx.fillStyle = '#fff'; cx.font = '800 24px ' + F; cx.textAlign = 'center'; cx.textBaseline = 'middle'; cx.fillText('OFERTA', x + 70, y + 36); }
+    cx.textAlign = 'left'; cx.textBaseline = 'alphabetic'; cx.fillStyle = '#14212b'; cx.font = '700 ' + fontN + 'px ' + F;
+    var lines = wrapText(cx, p.nombre, cw - 36, 2); lines.forEach(function (l, j) { cx.fillText(l, x + 18, y + th + fontN + 10 + j * (fontN + 4)); });
+    cx.fillStyle = col; cx.font = '800 ' + fontP + 'px ' + F; cx.fillText(pa.t, x + 18, y + ch - 20);
+    if (pa.old) { var tw = cx.measureText(pa.t).width; cx.fillStyle = '#94a3b8'; cx.font = '500 ' + Math.round(fontP * .55) + 'px ' + F; var ot = pa.old; cx.fillText(ot, x + 18 + tw + 12, y + ch - 20); cx.fillRect(x + 18 + tw + 12, y + ch - 20 - Math.round(fontP * .2), cx.measureText(ot).width, 3); }
+    cx.restore();
+  }
+  var url = catalogURL(st) || ('https://wa.me/' + waNumero(st.wa)), qs = 170, qy = H - footH + (footH - qs) / 2 - 8, q = qrCanvas(url, 400, 2);
+  cx.fillStyle = '#fff'; rrect(cx, W - gx - qs - 16, qy - 16, qs + 32, qs + 32, 22); cx.fill(); cx.drawImage(q, W - gx - qs, qy, qs, qs);
+  cx.textAlign = 'left'; cx.fillStyle = on; cx.font = '800 42px ' + F; cx.fillText('Pide por WhatsApp', gx, qy + 56);
+  cx.font = '600 34px ' + F; if (st.wa) cx.fillText(st.wa, gx, qy + 56 + 52);
+  cx.font = '500 26px ' + F; cx.globalAlpha = .85; var tl = wrapText(cx, 'Escanea el QR o entra a ' + url.replace(/^https?:\/\//, ''), W - 2 * gx - qs - 60, 2); tl.forEach(function (l, j) { cx.fillText(l, gx, qy + 56 + 52 + 44 + j * 32); }); cx.globalAlpha = 1;
+  return cv;
+}
+
 /* ---------- tarjetas de un solo producto (estilos extra para estados de WhatsApp) ---------- */
 var AD_ESTILOS = [['grid', 'Catálogo'], ['foto', 'Foto grande'], ['mosaico', 'Mosaico'], ['oferta', 'Oferta'], ['claro', 'Claro']];
 var AD_SERIF = 'Georgia,"Times New Roman",serif', AD_SANS = 'system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif';
@@ -3359,8 +3457,9 @@ route(/^\/compartir$/, function () {
   var conFoto = st.prods.filter(function (p) { var sk = stockDe(p); return p.vis !== false && p.nombre && p.disp !== false && !(sk !== null && sk <= 0) && p.fotos && p.fotos.length; });
   var adQ = (APP.ui.adQ || '').trim();
   var conFotoVista = adQ ? conFoto.filter(function (p) { return norm(p.nombre).indexOf(norm(adQ)) >= 0 || norm(p.sku || '').indexOf(norm(adQ)) >= 0; }) : conFoto;
+  var adPrimera = APP.ui.adSel === undefined;
   var sel = APP.ui.adSel = (APP.ui.adSel || []).filter(function (id) { return conFoto.some(function (p) { return p.id === id; }); });
-  if (!sel.length) sel = APP.ui.adSel = conFoto.slice().sort(function (a, b) { return (b.dest ? 2 : 0) + (num(b.ofertaPrecio) > 0 ? 1 : 0) + (b.fotos.length ? 1 : 0) - ((a.dest ? 2 : 0) + (num(a.ofertaPrecio) > 0 ? 1 : 0) + (a.fotos.length ? 1 : 0)); }).slice(0, 4).map(function (p) { return p.id; });
+  if (!sel.length && adPrimera) sel = APP.ui.adSel = conFoto.slice().sort(function (a, b) { return (b.dest ? 2 : 0) + (num(b.ofertaPrecio) > 0 ? 1 : 0) + (b.fotos.length ? 1 : 0) - ((a.dest ? 2 : 0) + (num(a.ofertaPrecio) > 0 ? 1 : 0) + (a.fotos.length ? 1 : 0)); }).slice(0, 4).map(function (p) { return p.id; });
   var body = html`<div class="pg stack">
     <div class="card"><h2>Tu catálogo</h2>${url ? html`<div class="in hz" style="background:var(--soft);overflow:hidden"><b style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${url.replace(/^https?:\/\//, '')}</b></div>
       ${st.pubAt ? '' : html`<div class="banner warn" style="margin-top:10px">Aún no has publicado el catálogo: el enlace funcionará cuando lo publiques.</div>`}
@@ -3369,9 +3468,10 @@ route(/^\/compartir$/, function () {
     <div class="card"><h2>Imagen para estados de WhatsApp</h2><p class="help" style="margin:0 0 10px">Tus productos con foto y precio y el QR de tu catálogo, listos para publicar.</p>
       <div class="fl" style="margin-bottom:8px"><button class="${fmt === 'c' ? 'on' : ''}" data-act="ad-fmt" data-v="c">Cuadrada</button><button class="${fmt === 'v' ? 'on' : ''}" data-act="ad-fmt" data-v="v">Vertical (estado)</button></div>
       <div class="fl" style="margin-bottom:8px">${AD_ESTILOS.map(function (e) { return html`<button class="${est === e[0] ? 'on' : ''}" data-act="ad-est" data-v="${e[0]}">${e[1]}</button>`; })}</div>
-      <div class="help" style="margin-bottom:6px">1. Elige hasta 6 productos (${sel.length} elegidos)${est === 'grid' ? '' : ' · se crea una imagen por producto'}</div>
+      <div class="help" style="margin-bottom:6px">${est === 'grid' ? html`1. Elige productos (<b id="ad-n">${sel.length}</b> elegidos) · hasta 6 en una imagen; si eliges más, se reparten en hojas grandes de 18` : html`1. Elige hasta 6 productos (<b id="ad-n">${sel.length}</b> elegidos) · se crea una imagen por producto`}</div>
       <div class="hz" style="margin-bottom:8px;gap:8px"><div class="sp" style="position:relative"><input class="in" id="ad-q" type="search" placeholder="Buscar producto…" value="${adQ}" style="border-radius:12px;padding-left:38px;min-height:42px"><span style="position:absolute;left:12px;top:11px;color:var(--mut)">${ic('search', 18)}</span></div>
         <button class="btn sm" data-act="ad-clear" ${sel.length ? '' : raw('disabled')} style="flex:0 0 auto">Quitar selección</button></div>
+      ${est === 'grid' ? html`<div class="wr" style="margin-bottom:8px"><button class="btn sm" data-act="ad-all">Seleccionar todos${adQ ? ' (los de la búsqueda)' : ''}</button></div>` : ''}
       <div class="card flat" id="ad-list" style="max-height:280px;overflow-y:auto">${conFotoVista.length ? conFotoVista.map(function (p) { return html`<label class="li" style="cursor:pointer;min-height:54px"><div class="th" style="width:40px;height:40px;flex:0 0 40px">${p.fotos.length ? phImg(p.fotos[0], 't') : iniciales(p.nombre)}</div><div class="tx"><b>${p.nombre}</b></div><input type="checkbox" data-act="ad-pick" data-id="${p.id}" ${sel.indexOf(p.id) >= 0 ? raw('checked') : ''} style="width:22px;height:22px"></label>`; }) : html`<div class="li help">${conFoto.length ? 'Ningún producto coincide con la búsqueda.' : 'Aún no hay productos con foto publicados.'}</div>`}</div>
       <button class="btn pri blk" style="margin-top:12px" data-act="ad-make" ${sel.length ? '' : raw('disabled')}>${ic('wand', 18)}Crear imagen</button><div id="ad-out" class="tc" style="margin-top:12px"></div></div>
     <div class="card"><h2>Catálogo para compartir sin internet</h2><p class="help" style="margin:0 0 10px">Un solo archivo con tus productos y fotos. Se manda por WhatsApp, Telegram o Zapya y se abre sin datos; los pedidos salen por WhatsApp.</p>
@@ -3401,22 +3501,50 @@ ACT['sh-wa'] = function () { var st = ST(); window.open('https://wa.me/?text=' +
 ACT['qr-dl'] = async function () { var st = ST(), c = qrCanvas(catalogURL(st), 800), b = await toBlob(c, 'image/png'); guardarArchivo(b, 'qr-' + (st.slug || 'catalogo') + '.png', 'Código QR'); };
 ACT['ad-fmt'] = function (el) { APP.ui.adFmt = el.getAttribute('data-v'); save(); refresh(); };
 ACT['ad-est'] = function (el) { APP.ui.adEst = el.getAttribute('data-v'); save(); refresh(); };
+ACT['ad-all'] = function () {
+  var st = ST(), q = norm((APP.ui.adQ || '').trim());
+  var lista = st.prods.filter(function (p) { var sk = stockDe(p); return p.vis !== false && p.nombre && p.disp !== false && !(sk !== null && sk <= 0) && p.fotos && p.fotos.length; })
+    .filter(function (p) { return !q || norm(p.nombre).indexOf(q) >= 0 || norm(p.sku || '').indexOf(q) >= 0; });
+  APP.ui.adSel = lista.map(function (p) { return p.id; }); save(); refresh();
+  toast(lista.length + ' productos elegidos' + (lista.length > 6 && (APP.ui.adEst || 'grid') === 'grid' ? ' · se crearán ' + Math.ceil(lista.length / 18) + ' hoja(s)' : ''));
+};
 ACT['ad-pick'] = function (el) {
   var s = APP.ui.adSel = APP.ui.adSel || [], id = el.getAttribute('data-id'), i = s.indexOf(id);
-  if (el.checked) { if (s.length >= 6) { el.checked = false; toast('Máximo 6 productos', 'bad'); return; } if (i < 0) s.push(id); } else if (i >= 0) s.splice(i, 1);
-  save(); var b = $('[data-act=ad-make]'); if (b) b.disabled = !s.length;
+  if (el.checked) { if (s.length >= 6 && (APP.ui.adEst || 'grid') !== 'grid') { el.checked = false; toast('Máximo 6 productos', 'bad'); return; } if (i < 0) s.push(id); } else if (i >= 0) s.splice(i, 1);
+  save(); var b = $('[data-act=ad-make]'); if (b) b.disabled = !s.length; var nn = $('#ad-n'); if (nn) nn.textContent = s.length;
 };
 ACT['ad-make'] = async function () {
   var st = ST(), prods = (APP.ui.adSel || []).map(function (id) { return prodById(st, id); }).filter(Boolean), est = APP.ui.adEst || 'grid', fmt = APP.ui.adFmt || 'c';
   var done = busy('Diseñando la imagen…'), out = $('#ad-out');
   try {
     var blobs = [];
-    if (est === 'grid') { var cv = await anuncioCanvas(st, prods, fmt), b0 = await toBlob(cv, 'image/jpeg', .9); if (b0) blobs.push(b0); }
+    if (est === 'grid' && prods.length > 6) {
+      var HOJA = 18, nh = Math.ceil(prods.length / HOJA);
+      for (var h = 0; h < nh; h++) {
+        setBusyText('Diseñando hoja ' + (h + 1) + ' de ' + nh + '…');
+        var chj = await anuncioHoja(st, prods.slice(h * HOJA, (h + 1) * HOJA), h + 1, nh), bh = await toBlob(chj, 'image/jpeg', .88);
+        chj.width = 1; chj.height = 1; if (bh) blobs.push(bh);
+        await new Promise(function (r) { setTimeout(r, 0); });
+      }
+    }
+    else if (est === 'grid') { var cv = await anuncioCanvas(st, prods, fmt), b0 = await toBlob(cv, 'image/jpeg', .9); if (b0) blobs.push(b0); }
     else for (var i = 0; i < prods.length; i++) { setBusyText('Diseñando ' + (i + 1) + ' de ' + prods.length + '…'); var c2 = await anuncioTarjeta(st, prods[i], est, fmt), b2 = await toBlob(c2, 'image/jpeg', .9); if (b2) blobs.push(b2); }
     done();
     if (!blobs.length) throw new Error('No se pudo crear la imagen'); window._adL = blobs; window._ad = blobs[0];
-    out.innerHTML = blobs.map(function (b, i) { return '<div style="margin-bottom:14px"><img class="pv" style="max-height:420px" src="' + URL.createObjectURL(b) + '" alt="Vista previa"><div class="wr" style="justify-content:center;margin-top:10px"><button class="btn pri sm" data-act="ad-share" data-i="' + i + '">' + ic('share', 16).s + 'Compartir / guardar</button></div></div>'; }).join('') + '<p class="help">Revisa los precios y textos antes de publicarla.</p>';
+    out.innerHTML = (blobs.length > 1 ? '<div class="wr" style="justify-content:center;margin-bottom:14px"><button class="btn pri sm" data-act="ad-share-all">' + ic('share', 16).s + 'Compartir / guardar las ' + blobs.length + ' juntas</button><button class="btn sm" data-act="ad-zip">' + ic('download', 16).s + 'Todas en un ZIP</button></div>' : '') + blobs.map(function (b, i) { return '<div style="margin-bottom:14px"><img class="pv" style="max-height:420px" src="' + URL.createObjectURL(b) + '" alt="Vista previa"><div class="wr" style="justify-content:center;margin-top:10px"><button class="btn pri sm" data-act="ad-share" data-i="' + i + '">' + ic('share', 16).s + 'Compartir / guardar</button></div></div>'; }).join('') + '<p class="help">Revisa los precios y textos antes de publicarla.</p>';
   } catch (e) { done(); toast(e.message, 'bad'); }
+};
+ACT['ad-share-all'] = async function () {
+  var bl = window._adL || []; if (!bl.length) return;
+  var done = busy('Preparando ' + bl.length + ' imágenes…');
+  try { var r = await guardarVarios(bl, 'anuncio-' + (ST().slug || 'tienda'), 'Anuncios', done); done(); if (r === 'guardado') toast('Imágenes guardadas. Búscalas en Archivos / Descargas.', 'ok', 4500); }
+  catch (e) { done(); toast('No se pudieron compartir todas: ' + (e.message || e), 'bad', 5000); }
+};
+ACT['ad-zip'] = async function () {
+  var bl = window._adL || []; if (!bl.length) return;
+  var done = busy('Creando el ZIP…');
+  try { await guardarZip(bl, 'anuncios-' + (ST().slug || 'tienda'), 'Anuncios', done); done(); }
+  catch (e) { done(); toast('No se pudo crear el ZIP: ' + (e.message || e), 'bad', 5000); }
 };
 ACT['ad-share'] = function (el) { var i = +((el && el.getAttribute && el.getAttribute('data-i')) || 0), b = (window._adL || [])[i] || window._ad; if (b) guardarArchivo(b, 'anuncio-' + (ST().slug || 'tienda') + (i ? '-' + (i + 1) : '') + '.jpg', 'Anuncio'); };
 
@@ -4073,7 +4201,7 @@ publicar = async function (st, o) {
       } else if (!ph.length && fotoWeb && /^https?:\/\//i.test(fotoWeb)) {
         /* URL externa: se usa tal cual */
       }
-      return { id: p.id, nombre: p.nombre, categoria: p.cat || '', precio: cv(N(p.precio)), precioOferta: pv.oferta ? cv(pv.precio) : null, precioTransf: ratioTransf(st, p) ? redondear(cv(N(p.precio)) * ratioTransf(st, p), 'CUP') : null, precioOfertaTransf: (ratioTransf(st, p) && pv.oferta) ? redondear(cv(pv.precio) * ratioTransf(st, p), 'CUP') : null, resumen: (p.desc || '').replace(/\s+/g, ' ').slice(0, 90), descripcion: p.desc || '', foto: ph[0] || fotoWeb || '', fotos: ph.length ? ph : (fotoWeb ? [fotoWeb] : []), agotado: !p.disp || (stk !== null && stk <= 0), nuevo: esNuevo(p), ventas: +p.vend || 0, masVendido: !!top[p.id], destacado: !!p.dest, visible: p.vis !== false, orden: i };
+      return { id: p.id, nombre: p.nombre, categoria: p.cat || '', precio: cv(N(p.precio)), precioOferta: pv.oferta ? cv(pv.precio) : null, precioTransf: ratioTransf(st, p) ? redondear(cv(N(p.precio)) * ratioTransf(st, p), 'CUP') : null, precioOfertaTransf: (ratioTransf(st, p) && pv.oferta) ? redondear(cv(pv.precio) * ratioTransf(st, p), 'CUP') : null, resumen: (p.desc || '').replace(/\s+/g, ' ').slice(0, 90), descripcion: p.desc || '', foto: ph[0] || fotoWeb || '', fotos: ph.length ? ph : (fotoWeb ? [fotoWeb] : []), agotado: !p.disp || (stk !== null && stk <= 0), nuevo: esNuevo(p), ventas: +p.vend || 0, masVendido: !!top[p.id], destacado: !!p.dest, visible: p.vis !== false && !(st.ocAg && (!p.disp || (stk !== null && stk <= 0))), orden: i };
     });
     return base;
   }
@@ -4164,12 +4292,22 @@ async function srvEstado(ms) {
 async function srvSync(ms) {
   var j = await srvEstado(ms), st = ST(); if (!st) throw new Error('Primero trae o crea la tienda.');
   var bySku = {}, byNom = {}; st.prods.forEach(function (p) { if (p.sku) bySku[nz(p.sku)] = p; byNom[nz(p.nombre)] = p; });
-  var n = 0, sin = 0;
-  j.items.forEach(function (it) { var p = bySku[nz(it.sku)] || byNom[nz(it.nombre)]; if (!p) { sin++; return; } if (it.stock != null) p.st = Math.max(0, Math.round(it.stock)); p.vend = +it.vendido || 0; n++; });
-  st.dirty = true; save(true); return { n: n, sin: sin, ventas: j.ventas };
+  var n = 0, sin = 0, ahora = Date.now(), primera = !st.srvT, lote = [];
+  j.items.forEach(function (it) {
+    var p = bySku[nz(it.sku)] || byNom[nz(it.nombre)]; if (!p) { sin++; return; }
+    var antes = stockDe(p);
+    if (it.stock != null) p.st = Math.max(0, Math.round(it.stock));
+    var desp = stockDe(p);
+    /* llegó o volvió a tener cantidad: estaba en 0, o no tenía existencias registradas (salvo la primera lectura) */
+    if (desp !== null && desp > 0 && (antes !== null ? antes <= 0 : !primera)) lote.push(p);
+    p.vend = +it.vendido || 0; n++;
+  });
+  if (lote.length) { st.srvLote = ahora; lote.forEach(function (p) { p.llego = ahora; }); }
+  st.srvT = ahora;
+  st.dirty = true; save(true); return { n: n, sin: sin, ventas: j.ventas, llegaron: lote.length };
 }
 ACT['srv-test'] = async function () { var done = busy('Probando…'); try { var j = await srvEstado(); done(); toast('Conectado: ' + j.cantidad + ' productos' + (j.ventas ? ' con ventas ✓' : ' (sin ventas: AxisPOS no activo)'), '', 4500); } catch (e) { done(); toast(e.message, 'bad', 5000); } };
-ACT['srv-sync'] = async function () { var done = busy('Leyendo stock y ventas…'); try { var r = await srvSync(); done(); toast(r.n + ' productos actualizados' + (r.sin ? ' · ' + r.sin + ' del servidor no están en el panel' : ''), '', 4500); refresh(); } catch (e) { done(); toast(e.message, 'bad', 5000); } };
+ACT['srv-sync'] = async function () { var done = busy('Leyendo stock y ventas…'); try { var r = await srvSync(); done(); toast(r.n + ' productos actualizados' + (r.llegaron ? ' · ' + r.llegaron + ' llegaron o volvieron a tener cantidad' : '') + (r.sin ? ' · ' + r.sin + ' del servidor no están en el panel' : ''), '', 4500); refresh(); } catch (e) { done(); toast(e.message, 'bad', 5000); } };
 ROUTES.unshift([/^\/conexion$/, function () {
   var c = APP.cfg, sv = c.srv || (c.srv = { url: '', dias: 30 }), g = G(), st = ST(), S = (st && st.sitio) || {}; bindTo(c, false, function (f) { save(); syncAuth(); if (f === 'ai.prov') refresh(); });
   var body = html`<div class="pg stack"><div class="card"><h2>GitHub (tu sitio)</h2><p class="help" style="margin:0 0 6px">El panel publica directo en el repositorio de tu web. No usa Firebase ni imgbb. Usa un token «fine-grained» solo de ese repositorio con permiso <b>Contents: Read and write</b>.</p>
