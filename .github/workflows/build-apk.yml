@@ -20,19 +20,6 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - name: Comprobar keystore en el repo
-        run: |
-          if [ ! -f debug.keystore ]; then
-            echo "ERROR: falta debug.keystore en la RAÍZ del repo."
-            exit 1
-          fi
-          ls -la debug.keystore
-
-      - name: Instalar dependencias del sistema (ImageMagick para iconos)
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq imagemagick
-
       - name: Instalar dependencias
         run: npm install
 
@@ -42,69 +29,35 @@ jobs:
       - name: Cleartext HTTP
         run: |
           sed -i 's/<application/<application android:usesCleartextTraffic="true"/' android/app/src/main/AndroidManifest.xml || true
+          grep -n usesCleartextTraffic android/app/src/main/AndroidManifest.xml || true
 
       - name: Inyectar plugin Kotlin CatalogoBackup
         run: bash scripts/inject-backup-plugin.sh
 
       - name: Icono de la app
         run: |
-          if ! command -v convert >/dev/null 2>&1; then
-            echo "convert no disponible; se dejan iconos por defecto de Capacitor"
-            exit 0
-          fi
+          sudo apt-get update && sudo apt-get install -y imagemagick
           for d in mdpi:48 hdpi:72 xhdpi:96 xxhdpi:144 xxxhdpi:192; do
             n=${d%%:*}; s=${d##*:}
-            mkdir -p android/app/src/main/res/mipmap-$n
             convert icon.png -resize ${s}x${s} android/app/src/main/res/mipmap-$n/ic_launcher.png
             cp android/app/src/main/res/mipmap-$n/ic_launcher.png android/app/src/main/res/mipmap-$n/ic_launcher_round.png
             cp android/app/src/main/res/mipmap-$n/ic_launcher.png android/app/src/main/res/mipmap-$n/ic_launcher_foreground.png
           done
           rm -rf android/app/src/main/res/mipmap-anydpi-v26 || true
 
-      - name: Firma fija (debug.keystore del repo)
+      - name: Firma fija
         run: |
           mkdir -p ~/.android
-          cp -f debug.keystore ~/.android/debug.keystore
-          mkdir -p android/app
-          cp -f debug.keystore android/app/debug.keystore
-          if [ -f android/app/build.gradle ]; then
-            if ! grep -q "signingConfigs" android/app/build.gradle; then
-              python3 - <<'PY'
-from pathlib import Path
-p = Path("android/app/build.gradle")
-t = p.read_text()
-block = """
-    signingConfigs {
-        debug {
-            storeFile file('debug.keystore')
-            storePassword 'android'
-            keyAlias 'androiddebugkey'
-            keyPassword 'android'
-        }
-    }
-"""
-t = t.replace("buildTypes {", block + "\n    buildTypes {", 1)
-if "signingConfig signingConfigs.debug" not in t:
-    t = t.replace("debug {", "debug {\n            signingConfig signingConfigs.debug", 1)
-p.write_text(t)
-print("signingConfigs inyectado")
-PY
-            fi
-          fi
-          ls -la ~/.android/debug.keystore android/app/debug.keystore
+          cp debug.keystore ~/.android/debug.keystore
 
       - name: Número de versión
         run: |
-          if [ -f android/app/build.gradle ]; then
-            sed -i "s/versionCode [0-9]*/versionCode ${{ github.run_number }}/" android/app/build.gradle
-            sed -i "s/versionName \"[^\"]*\"/versionName \"1.${{ github.run_number }}\"/" android/app/build.gradle
-          fi
+          sed -i "s/versionCode 1/versionCode ${{ github.run_number }}/; s/versionName \"1.0\"/versionName \"1.${{ github.run_number }}\"/" android/app/build.gradle || true
+          sed -i "s/versionCode = 1/versionCode = ${{ github.run_number }}/; s/versionName = \"1.0\"/versionName = \"1.${{ github.run_number }}\"/" android/app/build.gradle.kts || true
 
       - name: Sincronizar y compilar
         run: |
           npx cap sync android
-          cp -f debug.keystore android/app/debug.keystore
-          cp -f debug.keystore ~/.android/debug.keystore
           cd android
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon
@@ -114,3 +67,4 @@ PY
         with:
           name: Catalogo-de-Productos-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
+          
