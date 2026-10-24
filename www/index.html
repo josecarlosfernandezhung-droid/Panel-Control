@@ -1691,7 +1691,7 @@ function tasasEfectivas(st) {
 }
 function tiendaView(st) { return { mp: st.mp, ms: st.ms, tasas: tasasEfectivas(st) }; }
 function catalogURL(st) {
-  var b = (APP.cfg.base || '').trim();
+  var b = (APP.cfg.base || '').trim().replace(/[?#].*$/, '');
   if (!b) {
     var g = (APP.cfg.gh || {});
     if (g.owner && g.repo) {
@@ -2023,7 +2023,6 @@ function elegirArchivo(accept) {
 function blobAB64(blob) { return new Promise(function (res, rej) { var r = new FileReader(); r.onload = function () { res(String(r.result).split(',')[1] || ''); }; r.onerror = rej; r.readAsDataURL(blob); }); }
 function blobAURI(blob) { return new Promise(function (res, rej) { var r = new FileReader(); r.onload = function () { res(String(r.result)); }; r.onerror = rej; r.readAsDataURL(blob); }); }
 /* Guardar / compartir archivos: Capacitor → Web Share con archivos → descarga */
-async 
 /* Empaqueta un Blob en un ZIP de un solo archivo (evita bloqueo de descargas múltiples del navegador) */
 async function enZipUnico(blob, nombreDentro) {
   var Z = await jszip(), zip = new Z();
@@ -2031,7 +2030,7 @@ async function enZipUnico(blob, nombreDentro) {
   return zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
 }
 
-function guardarArchivo(blob, nombre, titulo) {
+async function guardarArchivo(blob, nombre, titulo) {
   var C = window.Capacitor && window.Capacitor.Plugins;
   var grande = blob && blob.size > 12 * 1048576;
   /* 1) Web Share con archivo (menos memoria que base64) */
@@ -4038,6 +4037,7 @@ publicar = async function (st, o) {
   var old = st.ghFotos || {}, repoSet = null;
   try { setBusyText('Revisando las fotos del sitio…'); repoSet = await arbolRepo(B); } catch (eT) { repoSet = null; }
   if (repoSet) { old = Object.assign({}, old); Object.keys(old).forEach(function (k) { if (!repoSet.has(old[k])) delete old[k]; }); }
+  if (repoSet) { fotosUsadas(st).forEach(function (id) { if (!old[id]) { var ex = ((id === st.logo || id === st.portada || id === st.espec) ? 'img/marca/' : 'img/productos/') + id + '.webp'; if (repoSet.has(ex)) old[id] = ex; } }); }
   var ids = fotosUsadas(st).filter(function (id) { return o.force || !old[id]; });
   var F = Object.assign({}, old), TANDA_FOTOS = 40, TANDA_BYTES = 6 * 1048576, PAUSA = 2500;
   async function commitar(es, mensaje) {
