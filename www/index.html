@@ -2023,7 +2023,15 @@ function elegirArchivo(accept) {
 function blobAB64(blob) { return new Promise(function (res, rej) { var r = new FileReader(); r.onload = function () { res(String(r.result).split(',')[1] || ''); }; r.onerror = rej; r.readAsDataURL(blob); }); }
 function blobAURI(blob) { return new Promise(function (res, rej) { var r = new FileReader(); r.onload = function () { res(String(r.result)); }; r.onerror = rej; r.readAsDataURL(blob); }); }
 /* Guardar / compartir archivos: Capacitor → Web Share con archivos → descarga */
-async function guardarArchivo(blob, nombre, titulo) {
+async 
+/* Empaqueta un Blob en un ZIP de un solo archivo (evita bloqueo de descargas múltiples del navegador) */
+async function enZipUnico(blob, nombreDentro) {
+  var Z = await jszip(), zip = new Z();
+  zip.file(nombreDentro || 'archivo', blob);
+  return zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+}
+
+function guardarArchivo(blob, nombre, titulo) {
   var C = window.Capacitor && window.Capacitor.Plugins;
   var grande = blob && blob.size > 12 * 1048576;
   /* 1) Web Share con archivo (menos memoria que base64) */
@@ -3487,14 +3495,20 @@ ACT['exp-html'] = async function () {
   }
   var done = busy('Creando el archivo…');
   try {
-    var emb = await datosExport(st, cal, function (i, n) { setBusyText('Preparando productos… ' + i + '/' + n); }, sinAg), blob = armarBlobHTML(emb); done(); if (!Object.keys(emb.data.productos).length) { toast('No queda ningún producto disponible para el archivo', 'bad', 4000); return; }
-    var mb = (blob.size / 1048576).toFixed(1), r = await guardarArchivo(blob, 'catalogo-' + (st.slug || slugDe(st.nombre) || 'tienda') + '.html', 'Catálogo de ' + st.nombre);
+    var emb = await datosExport(st, cal, function (i, n) { setBusyText('Preparando productos… ' + i + '/' + n); }, sinAg), blobHtml = armarBlobHTML(emb);
+    if (!Object.keys(emb.data.productos).length) { done(); toast('No queda ningún producto disponible para el archivo', 'bad', 4000); return; }
+    setBusyText('Empaquetando en un solo ZIP…');
+    var htmlName = 'catalogo-' + (st.slug || slugDe(st.nombre) || 'tienda') + '.html';
+    var zipName = 'catalogo-' + (st.slug || slugDe(st.nombre) || 'tienda') + '.zip';
+    var blob = await enZipUnico(blobHtml, htmlName);
+    done();
+    var mb = (blob.size / 1048576).toFixed(1), r = await guardarArchivo(blob, zipName, 'Catálogo de ' + st.nombre);
     var conFoto = cal && cal !== 'sin';
-    var msg = 'Archivo de ' + mb + ' MB ' + (r === 'descargado' ? 'descargado' : r === 'cancelado' ? 'listo' : 'compartido');
-    if (conFoto && blob.size < 50000 && st.prods.some(function (p) { return p.fotos && p.fotos.length; })) {
-      toast(msg + ' · AVISO: casi no hay fotos embebidas (no se pudieron leer del teléfono)', 'bad', 6500);
+    var msg = 'ZIP de ' + mb + ' MB (1 archivo) ' + (r === 'descargado' ? 'descargado' : r === 'cancelado' ? 'listo' : 'compartido');
+    if (conFoto && blobHtml.size < 50000 && st.prods.some(function (p) { return p.fotos && p.fotos.length; })) {
+      toast(msg + ' · AVISO: casi no hay fotos embebidas', 'bad', 6500);
     } else {
-      toast(msg, '', 3500);
+      toast(msg + ' · Dentro: ' + htmlName, '', 4000);
     }
   } catch (e) { done(); toast(e.message, 'bad', 4500); }
 };
@@ -4012,10 +4026,19 @@ async function leer() {
   var L = await gh('/contents/datos?ref=' + encodeURIComponent(G().branch || 'main')), f = L.filter(function (x) { return x.name === 'catalogo.json'; })[0];
   if (!f) return {}; return JSON.parse(d8((await gh('/git/blobs/' + f.sha)).content));
 }
+async function arbolRepo(B) {
+  var ref = await gh('/git/ref/heads/' + B), pc = await gh('/git/commits/' + ref.object.sha);
+  var t = await gh('/git/trees/' + pc.tree.sha + '?recursive=1');
+  if (!t || t.truncated || !t.tree) return null;
+  var set = new Set(); t.tree.forEach(function (x) { if (x.type === 'blob') set.add(x.path); }); return set;
+}
 publicar = async function (st, o) {
   o = o || {}; var bad = puedePublicar(st); if (bad) throw new Error(bad);
   var B = G().branch || 'main'; if ((APP.cfg.srv || {}).url) { try { setBusyText('Leyendo stock y ventas del servidor…'); await srvSync(6000); } catch (e) { } } setBusyText('Leyendo el sitio…'); var base = await leer();
-  var old = st.ghFotos || {}, ids = fotosUsadas(st).filter(function (id) { return o.force || !old[id]; });
+  var old = st.ghFotos || {}, repoSet = null;
+  try { setBusyText('Revisando las fotos del sitio…'); repoSet = await arbolRepo(B); } catch (eT) { repoSet = null; }
+  if (repoSet) { old = Object.assign({}, old); Object.keys(old).forEach(function (k) { if (!repoSet.has(old[k])) delete old[k]; }); }
+  var ids = fotosUsadas(st).filter(function (id) { return o.force || !old[id]; });
   var F = Object.assign({}, old), TANDA_FOTOS = 40, TANDA_BYTES = 6 * 1048576, PAUSA = 2500;
   async function commitar(es, mensaje) {
     var ref = await gh('/git/ref/heads/' + B), pc = await gh('/git/commits/' + ref.object.sha);
@@ -4054,11 +4077,11 @@ publicar = async function (st, o) {
     });
     return base;
   }
-  async function publicarJSON(msg) {
+  async function publicarJSON(msg, extra) {
     setBusyText(msg || 'Actualizando el catálogo…');
     var cat = armarCatalogo();
     var bj = await gh('/git/blobs', 'POST', { content: JSON.stringify(cat, null, 1), encoding: 'utf-8' });
-    await commitar([{ path: 'datos/catalogo.json', mode: '100644', type: 'blob', sha: bj.sha }], msg || 'Actualización desde el panel');
+    await commitar([{ path: 'datos/catalogo.json', mode: '100644', type: 'blob', sha: bj.sha }].concat(extra || []), msg || 'Actualización desde el panel');
   }
   var pend = ids.slice(), totalF = pend.length, vistas = 0, subidas = 0, nT = 0, nTot = Math.max(1, Math.ceil(totalF / TANDA_FOTOS));
   var errorParcial = null;
@@ -4097,9 +4120,17 @@ publicar = async function (st, o) {
     throw new Error('Se subieron ' + subidas + ' de ' + totalF + ' fotos (quedan guardadas). ' + errorParcial.message + ' Pulsa Publicar otra vez para continuar donde quedó. El catálogo ya muestra las fotos subidas hasta ahora.');
   }
   setBusyText('Publicando catálogo final…');
-  await publicarJSON('Actualización desde el panel');
+  var borrar = [];
+  if (repoSet) {
+    try {
+      var cat0 = armarCatalogo(), js = JSON.stringify(cat0);
+      if (cat0.productos && cat0.productos.length) repoSet.forEach(function (pth) { if (/^img\/productos\/[0-9a-z]{11}\.webp$/.test(pth) && js.indexOf(pth) < 0) borrar.push(pth); });
+    } catch (eB) { borrar = []; }
+  }
+  await publicarJSON('Actualización desde el panel' + (borrar.length ? ' · limpieza de ' + borrar.length + ' fotos viejas' : ''), borrar.map(function (pth) { return { path: pth, mode: '100644', type: 'blob', sha: null }; }));
+  if (borrar.length) { Object.keys(F).forEach(function (k) { if (borrar.indexOf(F[k]) >= 0) delete F[k]; }); try { toast(borrar.length + ' fotos viejas eliminadas del sitio'); } catch (eT2) { } }
   st.ghFotos = F; st.slugOK = true; st.pubAt = Date.now(); st.dirty = false; save(true);
-  return { cambios: subidas + 1, v: st.pubAt };
+  return { cambios: subidas + 1, borradas: borrar.length, v: st.pubAt };
 };
 async function importar() {
   var b = await leer(); if (!b.productos) throw new Error('No encontré datos/catalogo.json en el repositorio.');
@@ -4272,18 +4303,16 @@ ACT['bk-crear'] = async function (el) {
         }
       }
       done = busy(conFotos ? 'Preparando la copia con fotos…' : 'Preparando la copia…');
-      var TANDA = 200, n = conFotos && nivel === 'completa' ? idsBackup().length : 0, partes = n > TANDA ? Math.ceil(n / TANDA) : 1, base = 'catalogo-copia-' + ((st && st.slug) || 'tienda') + '-' + new Date().toISOString().slice(0, 10) + (conFotos ? (nivel === 'completa' ? '' : '-miniaturas') : '-sin-fotos'), r = '';
+      /* Un solo ZIP: el navegador bloquea descargas repetidas si se parten en varios archivos */
+      var base = 'catalogo-copia-' + ((st && st.slug) || 'tienda') + '-' + new Date().toISOString().slice(0, 10) + (conFotos ? (nivel === 'completa' ? '' : '-miniaturas') : '-sin-fotos'), r = '';
       var totalFotos = 0, ultimoMb = 0;
-      for (var k = 0; k < partes; k++) {
-        var blob = await crearBackup(conFotos, nivel, partes > 1 ? { i: k, n: TANDA } : null), nom = base + (partes > 1 ? '-parte-' + (k + 1) + '-de-' + partes : '') + '.zip';
-        totalFotos += (blob._fotosOk || 0);
-        ultimoMb = blob.size / 1048576;
-        done(); done = function () { };
-        setBusyText('Guardando / compartiendo… ' + (ultimoMb < 0.1 ? Math.round(blob.size / 1024) + ' KB' : ultimoMb.toFixed(1) + ' MB'));
-        r = await guardarArchivo(blob, nom, 'Copia del Catálogo de Productos' + (partes > 1 ? ' (parte ' + (k + 1) + ' de ' + partes + ')' : ''));
-        if (r === 'cancelado') break;
-        if (k < partes - 1) { toast('Parte ' + (k + 1) + ' de ' + partes + ' lista. Sigue la siguiente…', '', 2500); done = busy('Preparando la parte ' + (k + 2) + ' de ' + partes + '…'); }
-      }
+      var blob = await crearBackup(conFotos, nivel, null), nom = base + '.zip';
+      totalFotos += (blob._fotosOk || 0);
+      ultimoMb = blob.size / 1048576;
+      done(); done = function () { };
+      setBusyText('Guardando / compartiendo… ' + (ultimoMb < 0.1 ? Math.round(blob.size / 1024) + ' KB' : ultimoMb.toFixed(1) + ' MB'));
+      r = await guardarArchivo(blob, nom, 'Copia del Catálogo de Productos');
+      var partes = 1;
       if (r !== 'cancelado') {
         APP.cfg.lastBackup = Date.now(); save(true);
         var peso = ultimoMb < 0.1 ? Math.round(ultimoMb * 1024) + ' KB' : ultimoMb.toFixed(1) + ' MB';
@@ -4358,7 +4387,7 @@ ACT['bk-crear'] = async function (el) {
       var rec = ped[k]; if (!rec || typeof rec.txt !== 'string') return;
       leerPedidosWA(st, rec.txt).forEach(function (o) { if (!st.pedidos.some(function (x) { return x.c === o.c; })) { st.pedidos.push(o); n++; } });
     });
-    st.pedidos.sort(function (a, b) { return a.c < b.c ? 1 : -1; }); ultimo = Date.now(); save(true); return { n: n };
+    st.pedidos.sort(function (a, b) { return a.c < b.c ? 1 : -1; }); ultimo = Date.now(); save(true); return { n: n, total: Object.keys(ped).length, dias: Object.keys(vis).length };
   }
   window.fbListo = listo;
   window.fbVisitas = function (st, dias) {
@@ -4375,8 +4404,26 @@ ACT['bk-crear'] = async function (el) {
     return orig.apply(this, arguments);
   };
   ACT['fb-test'] = async function () {
-    var done = busy('Probando…');
-    try { var r = await sync(); done(); toast('Conectado ✓ · ' + r.n + ' pedido(s) nuevo(s)', '', 4000); refresh(); } catch (e) { done(); toast(e.message, 'bad', 5500); }
+    var done = busy('Probando…'), st = ST(), L = [];
+    try {
+      var c = cfg(), r = await sync(), url0 = String(c.url || '').replace(/\/+$/, '');
+      L.push('Firebase responde bien. Pedidos guardados allí: ' + r.total + ' (nuevos para la app: ' + r.n + '). Días con visitas: ' + r.dias + '.');
+      L.push('La app lee la carpeta «' + st.slug + '».');
+      var b = ''; try { b = catalogURL(st).replace(/\?.*$/, '').replace(/[^\/]*$/, ''); } catch (e0) { }
+      if (!b) L.push('No pude saber la dirección de tu web (Cuenta y conexión → Dirección pública).');
+      else {
+        try {
+          var rj = await fetchT(b + 'datos/catalogo.json?v=' + Date.now(), { cache: 'no-store' }, 25000);
+          if (!rj.ok) throw new Error('HTTP ' + rj.status);
+          var j = await rj.json(), f = j.firebase;
+          if (!f) L.push('PROBLEMA: el catálogo publicado en ' + b + ' NO tiene el enlace a Firebase, así que la web no envía nada. Revisa que la dirección de la base de datos esté guardada arriba y pulsa Publicar.');
+          else if (String(f.slug) !== String(st.slug)) L.push('PROBLEMA: la web envía a la carpeta «' + f.slug + '» pero la app lee «' + st.slug + '». Publica otra vez desde la app.');
+          else if (String(f.url || '').replace(/\/+$/, '') !== url0) L.push('PROBLEMA: la web usa otra base de datos (' + f.url + ') distinta a la de la app (' + url0 + '). Publica otra vez.');
+          else L.push('La web publicada está enlazada a esta misma base de datos y carpeta ✓. Si aun así no llegan pedidos, el envío desde el navegador del cliente está fallando (reglas o conexión).');
+        } catch (e1) { L.push('No pude leer el catálogo publicado en ' + b + ' (' + e1.message + '). Puede que aún no se haya actualizado la web.'); }
+      }
+      done(); refresh(); await aviso('Diagnóstico de Firebase', L.join(' '));
+    } catch (e) { done(); toast(e.message, 'bad', 5500); }
   };
   ACT['fb-reglas'] = function () {
     var em = (cfg().email || 'TU_CORREO').replace(/'/g, ''), ok = "auth != null && auth.token.email === '" + em + "'";
