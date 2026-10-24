@@ -60,7 +60,7 @@ jobs:
           npx cap sync android
           cd android
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
+          ./gradlew assembleDebug --info --no-daemon
 
       - name: Guardar APK
         uses: actions/upload-artifact@v4
