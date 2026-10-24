@@ -1793,6 +1793,8 @@ function renderRoute() {
 }
 function closeModalSilent() { $('#mo').classList.remove('on'); MODAL.res = null; }
 window.addEventListener('hashchange', renderRoute);
+/* En la app: fotos a archivos (en segundo plano, unos segundos después de abrir para no frenar el arranque) */
+setTimeout(function () { try { fsInit().then(function (ok) { if (ok) fsMigrar(); }); } catch (e) { } }, 4000);
 
 /* ---------- fotos: almacenamiento local (IndexedDB) ---------- */
 var IDB = null, MEMF = {};
@@ -1844,15 +1846,119 @@ function migrarFotosViejas(nuevo) {
 function idbDo(mode, fn) {
   return idb().then(function (db) { return new Promise(function (res, rej) { var tx = db.transaction('fotos', mode), rq = fn(tx.objectStore('fotos')); tx.oncomplete = function () { res(rq && rq.result); }; tx.onerror = function () { rej(tx.error); }; tx.onabort = function () { rej(tx.error); }; }); });
 }
-function fotoPut(rec) { MEMF[rec.id] = rec; return idbDo('readwrite', function (s) { return s.put(rec); }).catch(function () { }); }
-function fotoGet(id) { if (MEMF[id]) return Promise.resolve(MEMF[id]); return idbDo('readonly', function (s) { return s.get(id); }).catch(function () { return null; }); }
-function fotoDel(id) { delete MEMF[id]; Object.keys(PURL).forEach(function (k) { if (k.indexOf(id + '|') === 0) delete PURL[k]; }); return idbDo('readwrite', function (s) { return s.delete(id); }).catch(function () { }); }
+/* ---- Fotos como archivos del teléfono (solo en la app Android) ----
+   En la app cada foto es un archivo (fotos/ID.g = grande, fotos/ID.t = miniatura) en la carpeta privada de la app: abrir, listar y copiar es mucho más rápido que
+   la base del navegador. Antes de usarlo se hace una prueba de ida y vuelta; si algo falla se sigue usando IndexedDB como siempre. */
+var FS = { listo: null, modo: 'fetch', base: '' };
+function fsPlug() { var C = window.Capacitor; return C && C.Plugins && C.Plugins.Filesystem && C.isNativePlatform && C.isNativePlatform() ? C.Plugins.Filesystem : null; }
+function fsTipo(u8) { return u8[0] === 0xFF && u8[1] === 0xD8 ? 'image/jpeg' : (u8[0] === 0x89 && u8[1] === 0x50 ? 'image/png' : 'image/webp'); }
+function fsInit() {
+  if (FS.listo) return FS.listo;
+  FS.listo = (async function () {
+    var P = fsPlug(); if (!P) return false;
+    try {
+      try { await P.mkdir({ path: 'fotos', directory: 'DATA', recursive: true }); } catch (e) { }
+      FS.base = String((await P.getUri({ path: 'fotos', directory: 'DATA' })).uri).replace(/\/+$/, '');
+      var probe = 'fotos/_prueba.bin', ref = 'AQIDBAUGBwg=';
+      await P.writeFile({ path: probe, data: ref, directory: 'DATA' });
+      FS.modo = 'fetch';
+      try { var r = await fetch(window.Capacitor.convertFileSrc(FS.base + '/_prueba.bin')); var ab = await r.arrayBuffer(); if (!r.ok || ab.byteLength !== 8 || new Uint8Array(ab)[7] !== 8) throw new Error('fetch'); }
+      catch (e1) { FS.modo = 'b64'; var rd = await P.readFile({ path: probe, directory: 'DATA' }); if (String(rd.data).replace(/\s/g, '') !== ref) return false; }
+      try { await P.deleteFile({ path: probe, directory: 'DATA' }); } catch (e2) { }
+      return true;
+    } catch (e) { return false; }
+  })();
+  return FS.listo;
+}
+async function fsLeer(id, sz) {
+  var P = fsPlug(); if (!P) return null;
+  try {
+    if (FS.modo === 'fetch') {
+      var r = await fetch(window.Capacitor.convertFileSrc(FS.base + '/' + id + '.' + sz)); if (!r.ok) return null;
+      var ab = await r.arrayBuffer(); if (!ab.byteLength) return null;
+      return new Blob([ab], { type: fsTipo(new Uint8Array(ab, 0, Math.min(4, ab.byteLength))) });
+    }
+    var d = await P.readFile({ path: 'fotos/' + id + '.' + sz, directory: 'DATA' }), bin = atob(String(d.data)), u8 = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    return new Blob([u8], { type: fsTipo(u8) });
+  } catch (e) { return null; }
+}
+async function fsEscribir(id, sz, blob) {
+  await fsPlug().writeFile({ path: 'fotos/' + id + '.' + sz, data: await blobAB64(blob), directory: 'DATA' });
+}
+async function fsBorrar(id) {
+  var P = fsPlug(); if (!P) return;
+  ['g', 't'].forEach(function (sz) { P.deleteFile({ path: 'fotos/' + id + '.' + sz, directory: 'DATA' }).catch(function () { }); });
+}
+function fotoPut(rec) {
+  MEMF[rec.id] = rec;
+  return fsInit().then(function (ok) {
+    if (!ok) return idbDo('readwrite', function (s) { return s.put(rec); });
+    return (async function () {
+      try {
+        if (rec.g) await fsEscribir(rec.id, 'g', rec.g);
+        if (rec.t && rec.t !== rec.g) await fsEscribir(rec.id, 't', rec.t);
+      } catch (e) { return idbDo('readwrite', function (s) { return s.put(rec); }); }
+    })();
+  }).catch(function () { });
+}
+/* sz: 't' o 'g' para leer solo ese tamaño (más rápido); sin sz trae los dos */
+function fotoGet(id, sz) {
+  if (MEMF[id] && (MEMF[id].g || MEMF[id].t)) return Promise.resolve(MEMF[id]);
+  return fsInit().then(function (ok) {
+    var deIDB = function () { return idbDo('readonly', function (s) { return s.get(id); }).catch(function () { return null; }); };
+    return (async function () {
+      var g = null, t = null;
+      if (ok) {
+        try {
+          if (sz === 't') { t = await fsLeer(id, 't'); if (!t) g = await fsLeer(id, 'g'); }
+          else if (sz === 'g') { g = await fsLeer(id, 'g'); if (!g) t = await fsLeer(id, 't'); }
+          else { g = await fsLeer(id, 'g'); t = await fsLeer(id, 't'); }
+        } catch (eFs) { console.warn('[fotoGet] fs', id, eFs); }
+      }
+      if (!g && !t) {
+        var fromIdb = await deIDB();
+        if (fromIdb && (fromIdb.g || fromIdb.t)) {
+          MEMF[id] = fromIdb;
+          return fromIdb;
+        }
+        return null;
+      }
+      var rec = { id: id, g: g || t, t: t || g };
+      MEMF[id] = rec;
+      return rec;
+    })();
+  }).catch(function (e) { console.warn('[fotoGet]', id, e); return null; });
+}
+function fotoDel(id) { delete MEMF[id]; Object.keys(PURL).forEach(function (k) { if (k.indexOf(id + '|') === 0) delete PURL[k]; }); fsInit().then(function (ok) { if (ok) fsBorrar(id); }); return idbDo('readwrite', function (s) { return s.delete(id); }).catch(function () { }); }
+/* Pasa las fotos que aún están en IndexedDB a archivos. Cada una se borra de IndexedDB solo después de comprobar que el archivo quedó completo. */
+var FSMIG = false;
+async function fsMigrar() {
+  if (FSMIG) return; FSMIG = true;
+  try {
+    if (!(await fsInit())) return;
+    var P = fsPlug(), keys = await idbDo('readonly', function (s) { return s.getAllKeys(); }), movidas = 0;
+    if (!keys || !keys.length) return;
+    for (var i = 0; i < keys.length; i++) {
+      var k = keys[i], rec = await idbDo('readonly', function (s) { return s.get(k); }).catch(function () { return null; });
+      if (!rec || !rec.g) { continue; }
+      try {
+        await fsEscribir(k, 'g', rec.g);
+        var okG = (await P.stat({ path: 'fotos/' + k + '.g', directory: 'DATA' })).size === rec.g.size, okT = true;
+        if (rec.t && rec.t !== rec.g) { await fsEscribir(k, 't', rec.t); okT = (await P.stat({ path: 'fotos/' + k + '.t', directory: 'DATA' })).size === rec.t.size; }
+        if (okG && okT) { await idbDo('readwrite', function (s) { return s.delete(k); }); movidas++; }
+      } catch (e) { }
+      if (i % 4 === 3) await new Promise(function (r) { setTimeout(r, 30); });
+    }
+    if (movidas) toast('Fotos optimizadas (' + movidas + ') ✓');
+  } catch (e) { } finally { FSMIG = false; }
+}
 function fotoAll() { return idbDo('readonly', function (s) { return s.getAll(); }).catch(function () { return []; }); }
 var PURL = {};
 function fotoURL(id, sz) {
   var key = id + '|' + sz;
   if (PURL[key]) return Promise.resolve(PURL[key]);
-  return fotoGet(id).then(function (rec) {
+  return fotoGet(id, sz).then(function (rec) {
     if (rec && (rec[sz] || rec.g || rec.t)) { return (PURL[key] = URL.createObjectURL(rec[sz] || rec.g || rec.t)); }
     var st = ST(), ref = st && st.fotosMap[id]; if (!ref) return '';
     if (ref.k) return dbGet('fotos/' + st.slug + '/' + ref.k + '/' + sz, true).then(function (d) { return (PURL[key] = d || ''); }).catch(function () { return ''; });
@@ -1929,13 +2035,23 @@ async function guardarArchivo(blob, nombre, titulo) {
     }
   } catch (e) { if (e && (e.name === 'AbortError' || /cancel/i.test(String(e.message || e)))) return 'cancelado'; }
   /* 2) Capacitor: escribir y compartir (evitar base64 si es muy grande) */
-  if (C && C.Filesystem && C.Share && !grande) {
+  if (C && C.Filesystem && C.Share) {
     try {
-      var data = await blobAB64(blob);
       var dirs = ['CACHE', 'DOCUMENTS', 'EXTERNAL'];
       var r = null, lastErr = null;
+      /* Se escribe por trozos de ~1.5 MB (no todo en un solo mensaje): no se traba ni se queda sin memoria aunque pese cientos de MB */
+      var TROZO = 3 * 512 * 1024;
       for (var di = 0; di < dirs.length && !r; di++) {
-        try { r = await C.Filesystem.writeFile({ path: nombre, data: data, directory: dirs[di] }); } catch (we) { lastErr = we; }
+        try {
+          try { await C.Filesystem.deleteFile({ path: nombre, directory: dirs[di] }); } catch (de) { }
+          for (var off = 0; off < blob.size || off === 0; off += TROZO) {
+            var d64 = await blobAB64(blob.slice(off, off + TROZO));
+            if (off === 0) r = await C.Filesystem.writeFile({ path: nombre, data: d64, directory: dirs[di] });
+            else await C.Filesystem.appendFile({ path: nombre, data: d64, directory: dirs[di] });
+            if (blob.size > 6 * 1048576) setBusyText('Guardando… ' + Math.min(100, Math.round((off + TROZO) * 100 / blob.size)) + '%');
+            await new Promise(function (rs) { setTimeout(rs, 0); });
+          }
+        } catch (we) { lastErr = we; r = null; }
       }
       if (r && r.uri) {
         try { await C.Share.share({ title: titulo || nombre, url: r.uri, dialogTitle: titulo || nombre }); return 'compartido'; }
@@ -1946,9 +2062,6 @@ async function guardarArchivo(blob, nombre, titulo) {
       if (e && /cancel/i.test(String(e.message || e))) return 'cancelado';
       /* sigue al fallback */
     }
-  }
-  if (grande && C) {
-    toast('La copia es muy pesada. Prueba «Copia sin fotos» o comparte por partes.', 'bad', 6000);
   }
   /* 3) Descarga clásica */
   var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = nombre; document.body.appendChild(a); a.click();
@@ -3314,18 +3427,38 @@ async function datosExport(st, cal, prog, sinAg) {
   tienda.logo = st.logo ? await refExport(st, st.logo, 'mini') || undefined : undefined; tienda.portada = st.portada ? await refExport(st, st.portada, cal === 'sin' ? 'sin' : 'normal') || undefined : undefined;
   if (tienda.logo === undefined) delete tienda.logo; if (tienda.portada === undefined) delete tienda.portada;
   var cats = {}; st.cats.forEach(function (c, i) { cats[c.id] = { n: c.n, o: i }; });
-  var prods = {}, vis = st.prods.filter(function (p) { return p.vis !== false && p.nombre; });
+  var prods = {}, lista = [];
   for (var i = 0; i < st.prods.length; i++) {
     var p = st.prods[i]; if (p.vis === false || !p.nombre) continue;
     if (sinAg) { var sk = stockDe(p); if (!p.disp || (sk !== null && sk <= 0)) continue; }
-    var o = buildProd(st, p, i), f = [], max = cal === 'normal' ? 3 : 1;
-    for (var j = 0; j < Math.min(max, p.fotos.length); j++) { var r = await refExport(st, p.fotos[j], cal); if (r) f.push(r); }
-    if (f.length) o.f = f; else delete o.f;
-    prods[p.id] = o; if (prog && i % 15 === 0) prog(i, st.prods.length);
+    lista.push([p, i]);
+  }
+  var max = cal === 'normal' ? 3 : 1;
+  /* De 6 en 6 a la vez (las lecturas de fotos se solapan) y cediendo la pantalla entre tandas: más rápido y sin congelarse */
+  for (var k = 0; k < lista.length; k += 6) {
+    var lote = lista.slice(k, k + 6), res = await Promise.all(lote.map(async function (pi) {
+      var p = pi[0], o = buildProd(st, p, pi[1]), n = Math.min(max, p.fotos.length), rs = await Promise.all(p.fotos.slice(0, n).map(function (fid) { return refExport(st, fid, cal); })), f = rs.filter(Boolean);
+      if (f.length) o.f = f; else delete o.f;
+      return [p.id, o];
+    }));
+    res.forEach(function (x) { prods[x[0]] = x[1]; });
+    if (prog) prog(Math.min(k + 6, lista.length), lista.length);
+    await new Promise(function (rs) { setTimeout(rs, 0); });
   }
   return { slug: st.slug, url: catalogURL(st), fechaTxt: fechaCorta(Date.now()), data: { tienda: tienda, categorias: cats, productos: prods, v: Date.now(), pub: Date.now() } };
 }
 function jsonSeguro(o) { return JSON.stringify(o).replace(/</g, '\\u003c').split(String.fromCharCode(0x2028)).join('\\u2028').split(String.fromCharCode(0x2029)).join('\\u2029'); }
+/* Igual que armarHTML pero devuelve un Blob armado por partes: las fotos (base64) nunca se juntan en un solo texto gigante ni se les pasa el reemplazo de '<' */
+function armarBlobHTML(emb) {
+  var fotos = [], json = jsonSeguro(JSON.parse(JSON.stringify(emb, function (k, v) { if (typeof v === 'string' && v.length > 2000 && v.indexOf('data:') === 0) { fotos.push(v); return '@@FOTO' + (fotos.length - 1) + '@@'; } return v; })));
+  var partes = [], ult = 0, re = /"@@FOTO(\d+)@@"/g, m;
+  while ((m = re.exec(json))) { partes.push(json.slice(ult, m.index)); partes.push('"' + fotos[+m[1]] + '"'); ult = m.index + m[0].length; }
+  partes.push(json.slice(ult));
+  var marca = '<!--@@DATA@@-->', t = window.__CAT_TPL__, i = t.indexOf(marca);
+  var cab = t.slice(0, i), cola = t.slice(i + marca.length);
+  var limpia = function (x) { return x.replace('<script src="config.js" onerror="void 0"><\/script>', '').replace('<link rel="manifest" href="manifest.webmanifest">', '').replace('<link rel="icon" href="icons/icon-192.png">', ''); };
+  return new Blob([limpia(cab), '<script>window.__CATALOGO_DATA__='].concat(partes, [';<\/script>', limpia(cola)]), { type: 'text/html' });
+}
 function armarHTML(emb) {
   var t = window.__CAT_TPL__.replace('<!--@@DATA@@-->', function () { return '<script>window.__CATALOGO_DATA__=' + jsonSeguro(emb) + ';<\/script>'; });
   t = t.replace('<script src="config.js" onerror="void 0"><\/script>', '').replace('<link rel="manifest" href="manifest.webmanifest">', '').replace('<link rel="icon" href="icons/icon-192.png">', '');
@@ -3354,9 +3487,15 @@ ACT['exp-html'] = async function () {
   }
   var done = busy('Creando el archivo…');
   try {
-    var emb = await datosExport(st, cal, function (i, n) { setBusyText('Preparando productos… ' + i + '/' + n); }, sinAg), htm = armarHTML(emb), blob = new Blob([htm], { type: 'text/html' }); done(); if (!Object.keys(emb.data.productos).length) { toast('No queda ningún producto disponible para el archivo', 'bad', 4000); return; }
+    var emb = await datosExport(st, cal, function (i, n) { setBusyText('Preparando productos… ' + i + '/' + n); }, sinAg), blob = armarBlobHTML(emb); done(); if (!Object.keys(emb.data.productos).length) { toast('No queda ningún producto disponible para el archivo', 'bad', 4000); return; }
     var mb = (blob.size / 1048576).toFixed(1), r = await guardarArchivo(blob, 'catalogo-' + (st.slug || slugDe(st.nombre) || 'tienda') + '.html', 'Catálogo de ' + st.nombre);
-    toast('Archivo de ' + mb + ' MB ' + (r === 'descargado' ? 'descargado' : r === 'cancelado' ? 'listo' : 'compartido'), '', 3500);
+    var conFoto = cal && cal !== 'sin';
+    var msg = 'Archivo de ' + mb + ' MB ' + (r === 'descargado' ? 'descargado' : r === 'cancelado' ? 'listo' : 'compartido');
+    if (conFoto && blob.size < 50000 && st.prods.some(function (p) { return p.fotos && p.fotos.length; })) {
+      toast(msg + ' · AVISO: casi no hay fotos embebidas (no se pudieron leer del teléfono)', 'bad', 6500);
+    } else {
+      toast(msg, '', 3500);
+    }
   } catch (e) { done(); toast(e.message, 'bad', 4500); }
 };
 ACT['m-pick'] = function (el) { closeModal(el.getAttribute('data-v')); };
@@ -3595,14 +3734,18 @@ async function crearBackup(conFotos, nivel, parte) {
     }
   } catch (e) { }
   zip.file('datos.json', JSON.stringify({ app: 'catalogo', v: 1, fecha: Date.now(), data: data }));
+  var fotosOk = 0, fotosFail = 0;
   if (conFotos) {
     var ids = idsBackup();
     if (parte) ids = ids.slice(parte.i * parte.n, (parte.i + 1) * parte.n);
+    if (!ids.length) {
+      console.warn('[backup] No hay IDs de fotos en la tienda');
+    }
     for (var i = 0; i < ids.length; i++) {
-      if (i % 8 === 0) setBusyText('Empaquetando fotos… ' + (i + 1) + '/' + ids.length);
+      if (i % 2 === 0) { setBusyText('Empaquetando fotos… ' + (i + 1) + '/' + ids.length); await new Promise(function (rs) { setTimeout(rs, 0); }); }
       try {
         var r = await fotoGet(ids[i]);
-        if (!r) continue;
+        if (!r || !(r.g || r.t)) { fotosFail++; continue; }
         if (nivel === 'completa') {
           if (r.g) zip.file('fotos/' + r.id + '-g.bin', r.g);
           if (r.t && r.t !== r.g) zip.file('fotos/' + r.id + '-t.bin', r.t);
@@ -3610,12 +3753,19 @@ async function crearBackup(conFotos, nivel, parte) {
           var blob = r.t || r.g;
           if (blob) zip.file('fotos/' + r.id + '-g.bin', blob);
         }
+        fotosOk++;
         r = null;
-      } catch (e2) { }
+      } catch (e2) { fotosFail++; console.warn('[backup] foto', ids[i], e2); }
+    }
+    if (ids.length && fotosOk === 0) {
+      throw new Error('No se pudo leer ninguna foto del teléfono (' + ids.length + ' referenciadas). Prueba cerrar y abrir la app, o haz primero una copia sin fotos y revisa que las fotos se vean en el catálogo.');
     }
   }
   setBusyText('Creando el archivo…');
-  return zip.generateAsync(nivel === 'completa' ? { type: 'blob', compression: 'STORE' } : { type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 1 } });
+  var out = await zip.generateAsync({ type: 'blob', compression: 'STORE', streamFiles: true }, function (m) { setBusyText('Creando el archivo… ' + Math.round(m.percent) + '%'); });
+  out._fotosOk = fotosOk;
+  out._fotosFail = fotosFail;
+  return out;
 }
 /* Pregunta con qué calidad van las fotos de la copia */
 function pedirCalidadBackup() {
@@ -3632,7 +3782,7 @@ async function restaurarBackup(file) {
   var j = JSON.parse(await f.async('string')); if ((j.app !== 'catalogo' && j.app !== LEGADO) || !j.data) throw new Error('Copia no válida.');
   var n = 0, ids = {};
   zip.forEach(function (p) { var m = /^fotos\/(.+)-([gt])\.bin$/.exec(p); if (m) ids[m[1]] = 1; });
-  for (var id in ids) { var g = zip.file('fotos/' + id + '-g.bin'), t = zip.file('fotos/' + id + '-t.bin'); var gb = g ? new Blob([await g.async('arraybuffer')], { type: 'image/webp' }) : null, tb = t ? new Blob([await t.async('arraybuffer')], { type: 'image/webp' }) : gb; await fotoPut({ id: id, g: gb, t: tb }); n++; }
+  for (var id in ids) { var g = zip.file('fotos/' + id + '-g.bin'), t = zip.file('fotos/' + id + '-t.bin'); var gb = g ? new Blob([await g.async('arraybuffer')], { type: 'image/webp' }) : null, tb = t ? new Blob([await t.async('arraybuffer')], { type: 'image/webp' }) : gb; await fotoPut({ id: id, g: gb, t: tb }); n++; if (n % 5 === 0) { setBusyText('Restaurando fotos… ' + n + '/' + Object.keys(ids).length); await new Promise(function (rs) { setTimeout(rs, 0); }); } }
   j.data.stores.forEach(function (s) { var i = APP.stores.findIndex(function (x) { return x.id === s.id; }); migrar(s); s.dirty = true; if (i >= 0) APP.stores[i] = s; else APP.stores.push(s); });
   try { if (j.data.cfg) ['gh', 'srv', 'fb'].forEach(function (k) { var c = j.data.cfg[k]; if (!c) return; var cur = APP.cfg[k] || (APP.cfg[k] = {}); Object.keys(c).forEach(function (f) { if (!cur[f]) cur[f] = c[f]; }); }); } catch (e) { }
   if (!APP.cur && APP.stores[0]) APP.cur = APP.stores[0].id; save(true); return { tiendas: j.data.stores.length, fotos: n };
@@ -4048,21 +4198,103 @@ ACT['gh-import'] = async function () { if (!confirm('Se reemplazarán los datos 
     var t = +el.getAttribute('data-t'), L = await snapLista(), s = L.filter(function (x) { return x.t === t; })[0]; if (!s) return;
     await snapGuardar(true); var d = JSON.parse(s.json); APP.stores = d.stores; APP.cur = d.cur || (d.stores[0] && d.stores[0].id); APP.stores.forEach(function (x) { migrar(x); x.dirty = true; }); save(true); toast('Copia restaurada ✓'); go('/');
   };
-  ACT['bk-crear'] = async function (el) {
+  
+/* —— Copia de seguridad nativa (Kotlin CatalogoBackup) —— */
+async function backupNativoDisponible() {
+  try {
+    var P = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.CatalogoBackup;
+    return !!(P && P.crear);
+  } catch (e) { return false; }
+}
+async function crearBackupNativo(conFotos, nivel) {
+  var P = window.Capacitor.Plugins.CatalogoBackup;
+  var data = JSON.parse(JSON.stringify(APP));
+  data.auth = null;
+  try {
+    if (data.cfg) {
+      if (data.cfg.gh) data.cfg.gh.token = '';
+      if (data.cfg.ai) data.cfg.ai.key = '';
+      data.cfg.eltoque = ''; data.cfg.apiKey = ''; data.cfg.imgbb = ''; data.cfg.srvStats = null;
+      if (data.cfg.fb) data.cfg.fb.pass = '';
+    }
+  } catch (e0) { }
+  var datosJson = JSON.stringify({ app: 'catalogo', v: 1, fecha: Date.now(), data: data });
+  var ids = conFotos ? idsBackup() : [];
+  setBusyText(conFotos ? ('Empaquetando ' + ids.length + ' foto(s) en nativo…') : 'Preparando copia nativa…');
+  var st = ST();
+  var nom = 'catalogo-copia-' + ((st && st.slug) || 'tienda') + '-' + new Date().toISOString().slice(0, 10) +
+    (conFotos ? (nivel === 'completa' ? '' : '-miniaturas') : '-sin-fotos') + '.zip';
+  var r = await P.crear({
+    datosJson: datosJson,
+    fotoIds: ids,
+    calidad: nivel === 'completa' ? 'completa' : 'mini',
+    nombre: nom
+  });
+  /* Compartir con el plugin Share de Capacitor */
+  var C = window.Capacitor && window.Capacitor.Plugins;
+  if (C && C.Share && r.uri) {
+    try {
+      await C.Share.share({ title: 'Copia del Catálogo de Productos', url: r.uri, dialogTitle: nom });
+      return { ok: true, compartido: true, size: r.size, fotosOk: r.fotosOk || 0, fotosFail: r.fotosFail || 0 };
+    } catch (se) {
+      if (se && /cancel/i.test(String(se.message || se))) return { ok: true, cancelado: true, size: r.size, fotosOk: r.fotosOk || 0 };
+    }
+  }
+  return { ok: true, path: r.path, uri: r.uri, size: r.size, fotosOk: r.fotosOk || 0, fotosFail: r.fotosFail || 0 };
+}
+
+ACT['bk-crear'] = async function (el) {
     var conFotos = el.getAttribute('data-v') === '1', nivel = 'mini', st = ST(), done = function () { };
     try {
       if (conFotos) { nivel = await pedirCalidadBackup(); if (!nivel) return; }
+      /* Preferir plugin Kotlin si está disponible */
+      if (await backupNativoDisponible()) {
+        done = busy(conFotos ? 'Copia nativa con fotos…' : 'Copia nativa…');
+        try {
+          var nr = await crearBackupNativo(conFotos, nivel);
+          done();
+          if (nr.cancelado) return;
+          APP.cfg.lastBackup = Date.now(); save(true);
+          var mb = (nr.size || 0) / 1048576;
+          var peso = mb < 0.1 ? Math.round((nr.size || 0) / 1024) + ' KB' : mb.toFixed(1) + ' MB';
+          var extra = conFotos ? (' · ' + (nr.fotosOk || 0) + ' foto(s) · ' + peso) : (' · ' + peso);
+          if (conFotos && !(nr.fotosOk > 0) && idsBackup().length > 0) {
+            toast('Copia nativa SIN fotos' + extra, 'bad', 7000);
+          } else {
+            toast('Copia nativa ✓' + extra, 'ok', 5000);
+          }
+          refresh();
+          return;
+        } catch (ne) {
+          console.warn('[backup nativo]', ne);
+          toast('Nativo falló (' + ((ne && ne.message) || ne) + '). Probando modo web…', 'bad', 3500);
+          /* sigue al flujo JS de abajo */
+        }
+      }
       done = busy(conFotos ? 'Preparando la copia con fotos…' : 'Preparando la copia…');
       var TANDA = 200, n = conFotos && nivel === 'completa' ? idsBackup().length : 0, partes = n > TANDA ? Math.ceil(n / TANDA) : 1, base = 'catalogo-copia-' + ((st && st.slug) || 'tienda') + '-' + new Date().toISOString().slice(0, 10) + (conFotos ? (nivel === 'completa' ? '' : '-miniaturas') : '-sin-fotos'), r = '';
+      var totalFotos = 0, ultimoMb = 0;
       for (var k = 0; k < partes; k++) {
         var blob = await crearBackup(conFotos, nivel, partes > 1 ? { i: k, n: TANDA } : null), nom = base + (partes > 1 ? '-parte-' + (k + 1) + '-de-' + partes : '') + '.zip';
+        totalFotos += (blob._fotosOk || 0);
+        ultimoMb = blob.size / 1048576;
         done(); done = function () { };
-        setBusyText('Guardando / compartiendo…');
+        setBusyText('Guardando / compartiendo… ' + (ultimoMb < 0.1 ? Math.round(blob.size / 1024) + ' KB' : ultimoMb.toFixed(1) + ' MB'));
         r = await guardarArchivo(blob, nom, 'Copia del Catálogo de Productos' + (partes > 1 ? ' (parte ' + (k + 1) + ' de ' + partes + ')' : ''));
         if (r === 'cancelado') break;
         if (k < partes - 1) { toast('Parte ' + (k + 1) + ' de ' + partes + ' lista. Sigue la siguiente…', '', 2500); done = busy('Preparando la parte ' + (k + 2) + ' de ' + partes + '…'); }
       }
-      if (r !== 'cancelado') { APP.cfg.lastBackup = Date.now(); save(true); toast(partes > 1 ? 'Copia en ' + partes + ' partes ✓ (restaura todas)' : (r === 'guardado' ? 'Copia guardada en el teléfono ✓' : 'Copia ' + r + ' ✓'), 'ok', 4000); refresh(); }
+      if (r !== 'cancelado') {
+        APP.cfg.lastBackup = Date.now(); save(true);
+        var peso = ultimoMb < 0.1 ? Math.round(ultimoMb * 1024) + ' KB' : ultimoMb.toFixed(1) + ' MB';
+        var extra = conFotos ? (' · ' + totalFotos + ' foto(s) · ' + peso) : (' · ' + peso);
+        if (conFotos && totalFotos === 0) {
+          toast('Copia creada pero SIN fotos' + extra + '. Las fotos no se pudieron leer del almacenamiento.', 'bad', 7000);
+        } else {
+          toast((partes > 1 ? 'Copia en ' + partes + ' partes ✓' : 'Copia ' + (r || 'lista') + ' ✓') + extra, 'ok', 5000);
+        }
+        refresh();
+      }
     } catch (e) {
       done();
       var msg = (e && e.message) ? String(e.message) : 'No se pudo crear la copia';

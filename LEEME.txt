@@ -1,5 +1,42 @@
-1. Sube TODO el contenido de esta carpeta a un repositorio de GitHub (incluida la carpeta oculta .github).
-2. Entra a la pestaña Actions > "Compilar APK" > Run workflow (o espera a que corra solo al subir).
-3. Cuando termine (unos 5 min), abre la ejecucion y descarga "Catalogo-de-Productos-apk" (zip con app-debug.apk).
-4. Instala el APK. Cada nueva compilacion se instala encima de la anterior sin perder datos.
-Para cambiar el panel: reemplaza www/index.html y sube.
+Catálogo de Productos — híbrido HTML + plugin Kotlin de backup
+==============================================================
+
+¿A QUÉ REPOSITORIO SUBIR ESTO?
+------------------------------
+Sube ESTE paquete (híbrido Capacitor + HTML + plugin backup) al
+repositorio donde compilabas el APK ANTERIOR con Capacitor
+(el de tu panel web / index.html).
+
+NO lo mezcles con el repo de la app nativa Kotlin/Compose
+(si creaste uno aparte para esa prueba).
+
+Motivo: mismo appId (com.tototools.catalogo) + mismo debug.keystore
+→ puedes ACTUALIZAR sin desinstalar y no pierdes datos.
+
+Si el repo nativo Compose usó OTRA firma, ese APK y este no se
+actualizan entre sí: hay que desinstalar una vez y luego quedarte
+solo con esta línea (híbrida).
+
+Qué incluye
+-----------
+- Tu diseño HTML (www/index.html)
+- Plugin Kotlin CatalogoBackup (copias con fotos en nativo)
+- debug.keystore fijo + workflow que lo obliga (si falta, falla el build a propósito)
+- GitHub Actions: Compilar APK
+
+Cómo subir (PC)
+---------------
+1. Descomprime Catalogo-hibrido-apk.zip
+2. Contenido de la carpeta catalogo-hibrido → RAÍZ del repo Capacitor
+   Debe verse: .github, www, package.json, debug.keystore, native-plugins, scripts
+3. Commit + push a main/master
+4. Actions → Compilar APK → Run workflow
+5. Instala el APK (encima del anterior si la firma coincide)
+
+Firma (actualizar sin desinstalar)
+----------------------------------
+El workflow:
+- Exige debug.keystore en la raíz
+- Lo copia a ~/.android y a android/app/
+- Configura signingConfigs.debug con esa clave
+Si falta el keystore, el Action FALLA (mejor que firmar con otra clave a ciegas).
