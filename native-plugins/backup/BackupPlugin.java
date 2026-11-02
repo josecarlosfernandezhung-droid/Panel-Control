@@ -50,7 +50,8 @@ public class BackupPlugin extends Plugin {
             long fotosBytes = 0;
 
             ZipOutputStream zos = new ZipOutputStream(
-                new BufferedOutputStream(new FileOutputStream(outFile)));
+                new BufferedOutputStream(new FileOutputStream(outFile), 1 << 16));
+            zos.setLevel(java.util.zip.Deflater.NO_COMPRESSION);
             try {
                 // datos.json
                 zos.putNextEntry(new ZipEntry("datos.json"));
