@@ -70,16 +70,7 @@ jobs:
 from pathlib import Path
 p = Path("android/app/build.gradle")
 t = p.read_text()
-block = """
-    signingConfigs {
-        debug {
-            storeFile file('debug.keystore')
-            storePassword 'android'
-            keyAlias 'androiddebugkey'
-            keyPassword 'android'
-        }
-    }
-"""
+block = "\n    signingConfigs {\n        debug {\n            storeFile file('debug.keystore')\n            storePassword 'android'\n            keyAlias 'androiddebugkey'\n            keyPassword 'android'\n        }\n    }\n"
 t = t.replace("buildTypes {", block + "\n    buildTypes {", 1)
 if "signingConfig signingConfigs.debug" not in t:
     t = t.replace("debug {", "debug {\n            signingConfig signingConfigs.debug", 1)
