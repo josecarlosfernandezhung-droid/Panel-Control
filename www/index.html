@@ -1700,9 +1700,10 @@ function tasasEfectivas(st) {
 }
 function tiendaView(st) { return { mp: st.mp, ms: st.ms, tasas: tasasEfectivas(st) }; }
 function catalogURL(st) {
-  var b = (APP.cfg.base || '').trim().replace(/[?#].*$/, '');
+  var propio = !!(st && st.gh && st.gh.repo);
+  var b = propio ? '' : (APP.cfg.base || '').trim().replace(/[?#].*$/, '');
   if (!b) {
-    var g = (APP.cfg.gh || {});
+    var g = propio ? { owner: st.gh.owner || (APP.cfg.gh || {}).owner, repo: st.gh.repo } : (APP.cfg.gh || {});
     if (g.owner && g.repo) {
       b = (g.repo === g.owner + '.github.io')
         ? ('https://' + g.owner + '.github.io/')
@@ -1897,7 +1898,7 @@ async function fsEscribir(id, sz, blob) {
 }
 async function fsBorrar(id) {
   var P = fsPlug(); if (!P) return;
-  ['g', 't'].forEach(function (sz) { P.deleteFile({ path: 'fotos/' + id + '.' + sz, directory: 'DATA' }).catch(function () { }); });
+  ['g', 't', 'c', 'd', 'e', 'f'].forEach(function (sz) { P.deleteFile({ path: 'fotos/' + id + '.' + sz, directory: 'DATA' }).catch(function () { }); });
 }
 function fotoPut(rec) {
   MEMF[rec.id] = rec;
@@ -1962,6 +1963,31 @@ async function fsMigrar() {
     if (movidas) toast('Fotos optimizadas (' + movidas + ') ✓');
   } catch (e) { } finally { FSMIG = false; }
 }
+/* ---- Plugin nativo (Java): restaurar copias y armar el catálogo compartido sin pasar por JavaScript. Si no está o algo falla, se usa el camino de siempre. ---- */
+var NAT = { p: null, ok: null };
+function nativoListo() {
+  if (NAT.ok) return NAT.ok;
+  NAT.ok = (async function () {
+    try {
+      var C = window.Capacitor; if (!C || !C.isNativePlatform || !C.isNativePlatform()) return false;
+      var P = (C.Plugins && C.Plugins.Nativo) || (C.registerPlugin ? C.registerPlugin('Nativo') : null); if (!P || !P.ping) return false;
+      if (!(await fsInit())) return false;
+      var r = await P.ping(); if (!r || !r.ok) return false;
+      var a = String(r.dir).replace(/\/+$/, ''), b = String(FS.base).replace(/^file:\/\//, '').replace(/\/+$/, ''), dec = b; try { dec = decodeURIComponent(b); } catch (e) { }
+      if (a !== b && a !== dec) return false;
+      NAT.p = P;
+      if (P.addListener) P.addListener('progreso', function (e) {
+        if (!e) return;
+        if (e.que === 'html') setBusyText('Preparando fotos… ' + e.hecho + '/' + e.total);
+        else if (e.que === 'zip') setBusyText('Comprimiendo…');
+        else if (e.que === 'restaurar') setBusyText('Restaurando fotos… ' + e.hecho);
+        else if (e.que === 'optimizar') setBusyText('Optimizando fotos para el catálogo… ' + e.hecho + '/' + e.total);
+      });
+      return true;
+    } catch (e) { return false; }
+  })();
+  return NAT.ok;
+}
 function fotoAll() { return idbDo('readonly', function (s) { return s.getAll(); }).catch(function () { return []; }); }
 var PURL = {};
 function fotoURL(id, sz) {
@@ -1977,7 +2003,7 @@ function fotoURL(id, sz) {
 function hydrate(root) { $$('img[data-ph]', root).forEach(function (im) { var id = im.getAttribute('data-ph'); if (!id) return; fotoURL(id, im.getAttribute('data-sz') || 't').then(function (u) { if (u) im.src = u; }); }); }
 function phImg(id, sz) { return id ? raw('<img data-ph="' + esc(id) + '" data-sz="' + (sz || 't') + '" alt="">') : raw(''); }
 
-var CAL = { ahorro: { g: 720, gq: .6, t: 300, tq: .58 }, media: { g: 960, gq: .72, t: 360, tq: .66 }, alta: { g: 1600, gq: .86, t: 480, tq: .74 }, maxima: { g: 2000, gq: .92, t: 560, tq: .8 } };
+var CAL = { minima: { g: 540, gq: .5, t: 240, tq: .5 }, ahorro: { g: 720, gq: .6, t: 300, tq: .58 }, media: { g: 960, gq: .72, t: 360, tq: .66 }, alta: { g: 1600, gq: .86, t: 480, tq: .74 }, maxima: { g: 2000, gq: .92, t: 560, tq: .8 }, extrema: { g: 3000, gq: .95, t: 600, tq: .84 }, original: { g: 99999, gq: .97, t: 560, tq: .8 } };
 function decodeImg(file) {
   if (self.createImageBitmap) { return createImageBitmap(file).catch(function () { return decodeViaImg(file); }); }
   return decodeViaImg(file);
@@ -1997,6 +2023,22 @@ async function guardarFoto(src, opts) {
   opts = opts || {};
   var img = (src instanceof Blob) ? await decodeImg(src) : src;
   var c = CAL[APP.cfg.calidad] || CAL.media, gmax = opts.g || c.g, tmax = opts.t || c.t;
+  /* App: Java reduce y comprime la foto directo desde el archivo (mucho más rápido y sin congelar el panel) */
+  if (src instanceof Blob && !opts.mejorar && !opts.cuadrado && typeof nativoListo === 'function' && await nativoListo()) {
+    var idn = uid();
+    try {
+      await fsEscribir(idn, 'o', src);
+      var orig = APP.cfg.calidad === 'original' && !opts.g && /^image\/(jpeg|webp|png)$/.test(src.type);
+      await NAT.p.crearFoto({ id: idn, original: orig, g: Math.round(gmax), gq: Math.round((opts.gq || c.gq) * 100), t: Math.round(tmax), tq: Math.round((opts.tq || c.tq) * 100) });
+      try { delete PURL[idn + '|g']; delete PURL[idn + '|t']; } catch (e0) { }
+      return idn;
+    } catch (en) { try { fsBorrar(idn); fsPlug().deleteFile({ path: 'fotos/' + idn + '.o', directory: 'DATA' }).catch(function () { }); } catch (e1) { } }
+  }
+  /* «Original»: una foto JPG/WebP/PNG que llega ya hecha se guarda tal cual (sin recomprimir ni achicar); solo se genera la miniatura */
+  if (APP.cfg.calidad === 'original' && !opts.g && !opts.mejorar && !opts.cuadrado && src instanceof Blob && /^image\/(jpeg|webp|png)$/.test(src.type)) {
+    var cvo = canvasDe(img, tmax, false), to = await blobDe(cvo, c.tq), ido = uid();
+    await fotoPut({ id: ido, g: src, t: to }); return ido;
+  }
   var cvg = canvasDe(img, gmax, opts.cuadrado);
   if (opts.mejorar) mejorarCanvas(cvg, opts.mejorar);
   var cvt = (cvg.width <= tmax && cvg.height <= tmax) ? cvg : canvasDe(cvg, tmax, false);
@@ -2004,6 +2046,42 @@ async function guardarFoto(src, opts) {
   var id = uid(); await fotoPut({ id: id, g: g, t: t });
   return id;
 }
+/* Calidad con que suben las fotos al publicar el sitio: «guardada» = tal cual están en el panel; las demás las reducen/recomprimen solo para la subida (las del teléfono no cambian) */
+var PUB = { guardada: null, extrema: { g: 3000, q: .95 }, muyalta: { g: 2000, q: .9 }, maxima: { g: 2400, q: .93 }, alta: { g: 1600, q: .86 }, media: { g: 1200, q: .78 }, ahorro: { g: 900, q: .68 }, minima: { g: 640, q: .6 } };
+var PUBNM = { guardada: 'Tal como están guardadas', extrema: 'Extrema (3000 px)', maxima: 'Máxima (2400 px)', muyalta: 'Muy alta (2000 px)', alta: 'Alta (1600 px)', media: 'Media (1200 px)', ahorro: 'Ahorro (900 px)', minima: 'Mínima (640 px)' };
+async function fotoParaPublicar(blob, nivel) {
+  var P = PUB[nivel || APP.cfg.calPub || 'guardada']; if (!P || !blob) return blob;
+  try {
+    var img = await decodeImg(blob), w = img.width, h = img.height;
+    if (Math.max(w, h) <= P.g && blob.size < 60000) { if (img.close) img.close(); return blob; }
+    var cv = canvasDe(img, P.g, false); if (img.close) img.close();
+    var b = await blobDe(cv, P.q);
+    return (b && b.size < blob.size) ? b : blob;
+  } catch (e) { return blob; }
+}
+var PREV = { i: 0 };
+async function pintarPrevia(nivel) {
+  var st = ST(), conF = st ? st.prods.filter(function (p) { return p.fotos.length; }) : [];
+  if (!conF.length) { toast('Aún no hay productos con foto para la vista previa', 'bad'); return; }
+  nivel = nivel || APP.cfg.calPub || 'guardada';
+  var p = conF[PREV.i % conF.length], rec = await fotoGet(p.fotos[0], 'g'), orig = rec && (rec.g || rec.t);
+  if (!orig) { toast('No se pudo leer la foto', 'bad'); return; }
+  var done = busy('Preparando la vista previa…'), nueva, io, inn;
+  try { nueva = await fotoParaPublicar(orig, nivel); io = await decodeImg(orig); inn = await decodeImg(nueva); } catch (e) { done(); toast('No se pudo preparar la vista previa', 'bad'); return; }
+  done();
+  var uo = URL.createObjectURL(orig), un = URL.createObjectURL(nueva), kb = function (b) { return b.size >= 1048576 ? (b.size / 1048576).toFixed(2) + ' MB' : Math.round(b.size / 1024) + ' KB'; };
+  var tot = 0, nf = 0; conF.forEach(function (q) { nf += q.fotos.length; });
+  var est = (nf * nueva.size / 1048576).toFixed(1), estO = (nf * orig.size / 1048576).toFixed(1);
+  modal(html`<h2>Vista previa al publicar</h2><p class="help" style="margin:0 0 8px">${p.nombre} · nivel: <b>${PUBNM[nivel]}</b></p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div><div class="help" style="margin:0 0 4px">Guardada · ${io.width}×${io.height} · ${kb(orig)}</div><img src="${raw(uo)}" style="width:100%;aspect-ratio:1/1;object-fit:contain;background:#fff;border-radius:10px;border:1px solid var(--line)"></div>
+      <div><div class="help" style="margin:0 0 4px">Al publicar · ${inn.width}×${inn.height} · ${kb(nueva)}</div><img src="${raw(un)}" style="width:100%;aspect-ratio:1/1;object-fit:contain;background:#fff;border-radius:10px;border:1px solid var(--line)"></div></div>
+    <p class="help" style="margin:8px 0 12px">Con ${nf} fotos el sitio pesaría unos ${est} MB (hoy, tal como están: ${estO} MB aprox.).</p>
+    <div class="hz"><button class="btn sp" data-act="cal-otra">Otra foto</button><button class="btn pri sp" data-act="m-no">Cerrar</button></div>`);
+  if (io.close) io.close(); if (inn.close) inn.close();
+}
+ACT['cal-prev'] = function () { PREV.i = 0; return pintarPrevia(); };
+ACT['cal-otra'] = function () { PREV.i++; return pintarPrevia(); };
 function elegirImagenes(multiple, camara) {
   return new Promise(function (res) {
     var inp = camara ? $('#filecam') : $('#filepick');
@@ -2820,7 +2898,7 @@ route(/^\/productos\/([^\/]+)$/, function (id) {
   if (!KEEP || !DRAFT || DRAFT._rid !== id) {
     var base = nuevo ? nuevoProducto(st) : prodById(st, id);
     if (!base) { go('/productos'); return { title: '' }; }
-    DRAFT = JSON.parse(JSON.stringify(base)); DRAFT._rid = id;
+    DRAFT = JSON.parse(JSON.stringify(base)); DRAFT._rid = id; DRAFT._tuvoFoto = !!(base.fotos && base.fotos.length);
     if (nuevo) { var f = filtroProd(); if (f.cat && f.cat !== '@sin') DRAFT.cat = f.cat; if (st.cats.length === 1) DRAFT.cat = st.cats[0].id; }
   }
   KEEP = false; var d = DRAFT; bindTo(d, false);
@@ -2910,7 +2988,9 @@ ACT['p-save'] = function () {
   if (num(d.ofertaPrecio) > 0 && d.precio !== '' && num(d.ofertaPrecio) >= num(d.precio)) { toast('La oferta debe ser menor que el precio', 'bad', 3500); return; }
   d.opciones = d.opciones.filter(function (o) { return (o.nombre || '').trim(); });
   d.opciones.forEach(function (o) { o.nombre = o.nombre.trim(); });
-  var rid = d._rid; delete d._rid; d.u = Date.now(); var copia = JSON.parse(JSON.stringify(d));
+  var rid = d._rid, tuvo = d._tuvoFoto; delete d._rid; delete d._tuvoFoto; d.u = Date.now();
+  /* Si quitaste todas las fotos del producto, el sitio también deja de mostrar la que tenía */
+  if (!d.fotos.length && tuvo) { d.fotoWeb = ''; d.sinFoto = true; } else if (d.fotos.length) d.sinFoto = false; var copia = JSON.parse(JSON.stringify(d));
   if (rid === 'nuevo') st.prods.push(copia); else { var i = st.prods.findIndex(function (p) { return p.id === copia.id; }); if (i >= 0) st.prods[i] = copia; else st.prods.push(copia); }
   DRAFT = null; touch(st); toast('Cambios guardados'); go('/productos');
 };
@@ -2999,6 +3079,8 @@ route(/^\/pedidos$/, function () {
         ${tel ? html`<a class="btn wa sm" target="_blank" rel="noopener" href="https://wa.me/${tel}?text=${encodeURIComponent(msg)}">${ic('chat', 16)}WhatsApp</a>` : ''}</div></div>`;
   };
   var body = html`<div class="pg stack"><div class="fl">${[['todos', 'Todos', st.pedidos.length], ['nuevo', 'Nuevos', cuenta('nuevo')], ['confirmado', 'Confirmados', cuenta('confirmado')], ['entregado', 'Entregados', cuenta('entregado')], ['cancelado', 'Cancelados', cuenta('cancelado')]].map(function (c) { return html`<button class="${f === c[0] ? 'on' : ''}" data-act="ped-f" data-v="${c[0]}">${c[1]} (${c[2]})</button>`; })}</div>
+    ${(function () { var fb = APP.cfg.fb || {}; var lis = window.fbListo ? window.fbListo() : true; return (!lis && (fb.url || fb.key || fb.email)) ? html`<a class="banner warn" style="display:block;text-decoration:none;color:#7a4a00" href="#/conexion"><b>Los pedidos no se están leyendo de Firebase</b>: falta algún dato (la contraseña se borra al restaurar una copia). Toca para completarlo; mientras tanto solo se leen los mensajes que copies de WhatsApp.</a>` : ''; })()}
+    <div class="wr" style="margin:0"><button class="btn sm" data-act="ped-pegar">${ic('chat', 16)}Pegar pedido de WhatsApp</button></div>
     ${L.length ? L.slice(0, n).map(card) : html`<div class="card tc"><p class="bold">Aún no hay pedidos aquí</p><p class="help">Cuando un cliente te mande su pedido por WhatsApp, copia el mensaje y toca «Buscar pedidos»: el panel lee el código del pedido y lo agrega a esta lista con sus productos y su estado.</p><button class="btn sm" data-act="ped-sync">${ic('refresh', 16)}Buscar pedidos</button></div>`}
     ${L.length > n ? html`<button class="btn blk" data-act="ped-more">Ver más</button>` : ''}</div>`;
   return {
@@ -3048,6 +3130,7 @@ ACT['ped-sync'] = async function () {
   st.pedidos.sort(function (a, b) { return a.c < b.c ? 1 : -1; }); save(true);
   toast(n ? n + (n === 1 ? ' pedido agregado' : ' pedidos agregados') : 'Ese pedido ya estaba en la lista'); refresh();
 };
+ACT['ped-pegar'] = ACT['ped-sync'];
 ACT['ped-es'] = async function (el) {
   var st = ST(), p = st.pedidos.filter(function (x) { return x.c === el.getAttribute('data-c'); })[0], e = el.getAttribute('data-e');
   if (e === 'cancelado' && !(await confirmar('¿Cancelar el pedido #' + codigoVista(p.c) + '?', 'Cancelar pedido', true))) return;
@@ -3212,10 +3295,15 @@ function wrapText(cx, text, maxW, maxLines) {
   if (lines.length > maxLines) { lines = lines.slice(0, maxLines); var l = lines[maxLines - 1]; while (l.length > 1 && cx.measureText(l + '…').width > maxW) l = l.slice(0, -1); lines[maxLines - 1] = l + '…'; }
   return lines;
 }
-async function bitmapFoto(id) {
+/* preferMini: true → usa miniatura (más rápido y liviano, ideal para anuncios «Rápida») */
+async function bitmapFoto(id, preferMini) {
   try {
-    var rec = await fotoGet(id); if (rec && rec.g) return await decodeImg(rec.g);
-    var u = await fotoURL(id, 'g'); if (!u) return null;
+    var rec = await fotoGet(id);
+    if (rec) {
+      var b = preferMini ? (rec.t || rec.g) : (rec.g || rec.t);
+      if (b) return await decodeImg(b);
+    }
+    var u = await fotoURL(id, preferMini ? 't' : 'g'); if (!u) return null;
     if (u.indexOf('data:') === 0) { var r0 = await fetch(u); return await decodeImg(await r0.blob()); }
     var r = await fetchT(u, { mode: 'cors' }, 20000); return await decodeImg(await r.blob());
   } catch (e) { return null; }
@@ -3249,9 +3337,9 @@ async function anuncioCanvas(st, prods, fmt) {
     var p = prods[i], r = Math.floor(i / cols), c = i % cols, rowN = (r === rows - 1) ? (n - r * cols) : cols;
     var offX = (cols - rowN) * (cw + gap) / 2, x = gx + c * (cw + gap) + offX, y = top + r * (ch + gap);
     cx.save(); rrect(cx, x, y, cw, ch, 26); cx.fillStyle = '#fff'; cx.fill(); cx.clip();
-    var th = Math.round(ch * .62), im = p.fotos[0] ? await bitmapFoto(p.fotos[0]) : null;
+    var th = Math.round(ch * .62), im = p.fotos[0] ? await bitmapFoto(p.fotos[0], window.__adPreferMini) : null;
     cx.fillStyle = '#e8eef0'; cx.fillRect(x, y, cw, th);
-    if (im) { var k = Math.max(cw / im.width, th / im.height), sw = cw / k, sh = th / k; cx.drawImage(im, (im.width - sw) / 2, (im.height - sh) / 2, sw, sh, x, y, cw, th); }
+    if (im) { var k = Math.max(cw / im.width, th / im.height), sw = cw / k, sh = th / k; cx.drawImage(im, (im.width - sw) / 2, (im.height - sh) / 2, sw, sh, x, y, cw, th); if (im.close) try { im.close(); } catch (e0) { } }
     else { cx.fillStyle = col; cx.globalAlpha = .35; cx.font = '800 64px ' + F; cx.textAlign = 'center'; cx.textBaseline = 'middle'; cx.fillText(iniciales(p.nombre), x + cw / 2, y + th / 2); cx.globalAlpha = 1; }
     var pa = precioAnuncio(st, p);
     if (pa.old) { cx.fillStyle = '#e11d48'; rrect(cx, x + 14, y + 14, 112, 42, 21); cx.fill(); cx.fillStyle = '#fff'; cx.font = '800 24px ' + F; cx.textAlign = 'center'; cx.textBaseline = 'middle'; cx.fillText('OFERTA', x + 70, y + 36); }
@@ -3289,9 +3377,9 @@ async function anuncioHoja(st, prods, hn, tot) {
     var p = prods[i], r = Math.floor(i / cols), c = i % cols, rowN = (r === rows - 1) ? (n - r * cols) : cols;
     var offX = (cols - rowN) * (cw + gap) / 2, x = gx + c * (cw + gap) + offX, y = top + r * (ch + gap);
     cx.save(); rrect(cx, x, y, cw, ch, 26); cx.fillStyle = '#fff'; cx.fill(); cx.clip();
-    var th = Math.round(ch * .62), im = p.fotos[0] ? await bitmapFoto(p.fotos[0]) : null;
+    var th = Math.round(ch * .62), im = p.fotos[0] ? await bitmapFoto(p.fotos[0], window.__adPreferMini) : null;
     cx.fillStyle = '#e8eef0'; cx.fillRect(x, y, cw, th);
-    if (im) { var k = Math.max(cw / im.width, th / im.height), sw = cw / k, sh = th / k; cx.drawImage(im, (im.width - sw) / 2, (im.height - sh) / 2, sw, sh, x, y, cw, th); if (im.close) im.close(); }
+    if (im) { var k = Math.max(cw / im.width, th / im.height), sw = cw / k, sh = th / k; cx.drawImage(im, (im.width - sw) / 2, (im.height - sh) / 2, sw, sh, x, y, cw, th); if (im.close) try { im.close(); } catch (e0) { } }
     else { cx.fillStyle = col; cx.globalAlpha = .35; cx.font = '800 64px ' + F; cx.textAlign = 'center'; cx.textBaseline = 'middle'; cx.fillText(iniciales(p.nombre), x + cw / 2, y + th / 2); cx.globalAlpha = 1; }
     var pa = precioAnuncio(st, p);
     if (pa.old) { cx.fillStyle = '#e11d48'; rrect(cx, x + 14, y + 14, 112, 42, 21); cx.fill(); cx.fillStyle = '#fff'; cx.font = '800 24px ' + F; cx.textAlign = 'center'; cx.textBaseline = 'middle'; cx.fillText('OFERTA', x + 70, y + 36); }
@@ -3400,7 +3488,7 @@ function adContacto(cx, st, x, y, maxW, size, color, una) {
 async function anuncioTarjeta(st, p, estilo, fmt) {
   var W = 1080, H = fmt === 'v' ? 1920 : 1080, big = fmt === 'v', cv = document.createElement('canvas'); cv.width = W; cv.height = H;
   var cx = cv.getContext('2d'), col = st.color || '#0a7c86', acento = mezclar(col, .55, '#fff'), pad = 64, d = precioDatos(st, p);
-  var logo = st.logo ? await bitmapFoto(st.logo) : null, ims = []; for (var i = 0; i < Math.min(3, p.fotos.length); i++) { var b = await bitmapFoto(p.fotos[i]); if (b) ims.push(b); }
+  var logo = st.logo ? await bitmapFoto(st.logo) : null, ims = []; for (var i = 0; i < Math.min(3, p.fotos.length); i++) { var b = await bitmapFoto(p.fotos[i], window.__adPreferMini); if (b) ims.push(b); }
   var cat = catName(st, p.cat), marca = (st.nombre || '').toUpperCase() + ' ' + new Date().toLocaleDateString('es');
   var url = catalogURL(st) || ('https://wa.me/' + waNumero(st.wa));
   cx.textBaseline = 'alphabetic';
@@ -3490,6 +3578,8 @@ route(/^\/compartir$/, function () {
     <div class="card"><h2>Imagen para estados de WhatsApp</h2><p class="help" style="margin:0 0 10px">Tus productos con foto y precio y el QR de tu catálogo, listos para publicar.</p>
       <div class="fl" style="margin-bottom:8px"><button class="${fmt === 'c' ? 'on' : ''}" data-act="ad-fmt" data-v="c">Cuadrada</button><button class="${fmt === 'v' ? 'on' : ''}" data-act="ad-fmt" data-v="v">Vertical (estado)</button></div>
       <div class="fl" style="margin-bottom:8px">${AD_ESTILOS.map(function (e) { return html`<button class="${est === e[0] ? 'on' : ''}" data-act="ad-est" data-v="${e[0]}">${e[1]}</button>`; })}</div>
+      <div class="fl" style="margin-bottom:8px"><button class="${(APP.ui.adCal || 'normal') === 'rapida' ? 'on' : ''}" data-act="ad-cal" data-v="rapida">Rápida</button><button class="${(APP.ui.adCal || 'normal') === 'normal' ? 'on' : ''}" data-act="ad-cal" data-v="normal">Normal</button><button class="${(APP.ui.adCal || 'normal') === 'alta' ? 'on' : ''}" data-act="ad-cal" data-v="alta">Alta calidad</button></div>
+      <p class="help" style="margin:0 0 8px">«Rápida» usa miniaturas y comprime más (más ligera y veloz). «Alta calidad» prioriza nitidez.</p>
       <div class="help" style="margin-bottom:6px">${est === 'grid' ? html`1. Elige productos (<b id="ad-n">${sel.length}</b> elegidos) · hasta 6 en una imagen; si eliges más, se reparten en hojas grandes de 18` : html`1. Elige hasta 6 productos (<b id="ad-n">${sel.length}</b> elegidos) · se crea una imagen por producto`}</div>
       <div class="hz" style="margin-bottom:8px;gap:8px"><div class="sp" style="position:relative"><input class="in" id="ad-q" type="search" placeholder="Buscar producto…" value="${adQ}" style="border-radius:12px;padding-left:38px;min-height:42px"><span style="position:absolute;left:12px;top:11px;color:var(--mut)">${ic('search', 18)}</span></div>
         <button class="btn sm" data-act="ad-clear" ${sel.length ? '' : raw('disabled')} style="flex:0 0 auto">Quitar selección</button></div>
@@ -3537,25 +3627,58 @@ ACT['ad-pick'] = function (el) {
 };
 ACT['ad-make'] = async function () {
   var st = ST(), prods = (APP.ui.adSel || []).map(function (id) { return prodById(st, id); }).filter(Boolean), est = APP.ui.adEst || 'grid', fmt = APP.ui.adFmt || 'c';
-  var done = busy('Diseñando la imagen…'), out = $('#ad-out');
+  var cal = APP.ui.adCal || 'normal'; /* rapida | normal | alta */
+  var jpgQ = cal === 'rapida' ? 0.78 : (cal === 'alta' ? 0.92 : 0.88);
+  window.__adPreferMini = cal === 'rapida';
+  window.__adCancel = false;
+  var done = busy(cal === 'rapida' ? 'Diseñando (rápido)…' : 'Diseñando la imagen…'), out = $('#ad-out');
+  /* Botón cancelar sobre el busy */
+  try {
+    var busyEl = document.getElementById('busy');
+    if (busyEl && !document.getElementById('ad-cancel-btn')) {
+      var cb = document.createElement('button');
+      cb.id = 'ad-cancel-btn'; cb.className = 'btn sm'; cb.style.cssText = 'margin-top:14px';
+      cb.textContent = 'Cancelar'; cb.onclick = function () { window.__adCancel = true; };
+      busyEl.appendChild(cb);
+    }
+  } catch (eC) { }
   try {
     var blobs = [];
     if (est === 'grid' && prods.length > 6) {
       var HOJA = 18, nh = Math.ceil(prods.length / HOJA);
       for (var h = 0; h < nh; h++) {
+        if (window.__adCancel) throw new Error('cancelado');
         setBusyText('Diseñando hoja ' + (h + 1) + ' de ' + nh + '…');
-        var chj = await anuncioHoja(st, prods.slice(h * HOJA, (h + 1) * HOJA), h + 1, nh), bh = await toBlob(chj, 'image/jpeg', .88);
+        var chj = await anuncioHoja(st, prods.slice(h * HOJA, (h + 1) * HOJA), h + 1, nh), bh = await toBlob(chj, 'image/jpeg', jpgQ);
         chj.width = 1; chj.height = 1; if (bh) blobs.push(bh);
         await new Promise(function (r) { setTimeout(r, 0); });
       }
     }
-    else if (est === 'grid') { var cv = await anuncioCanvas(st, prods, fmt), b0 = await toBlob(cv, 'image/jpeg', .9); if (b0) blobs.push(b0); }
-    else for (var i = 0; i < prods.length; i++) { setBusyText('Diseñando ' + (i + 1) + ' de ' + prods.length + '…'); var c2 = await anuncioTarjeta(st, prods[i], est, fmt), b2 = await toBlob(c2, 'image/jpeg', .9); if (b2) blobs.push(b2); }
+    else if (est === 'grid') {
+      if (window.__adCancel) throw new Error('cancelado');
+      var cv = await anuncioCanvas(st, prods, fmt), b0 = await toBlob(cv, 'image/jpeg', jpgQ); if (b0) blobs.push(b0); cv.width = 1; cv.height = 1;
+    }
+    else for (var i = 0; i < prods.length; i++) {
+      if (window.__adCancel) throw new Error('cancelado');
+      setBusyText('Diseñando ' + (i + 1) + ' de ' + prods.length + '…');
+      var c2 = await anuncioTarjeta(st, prods[i], est, fmt), b2 = await toBlob(c2, 'image/jpeg', jpgQ);
+      if (b2) blobs.push(b2); c2.width = 1; c2.height = 1;
+      await new Promise(function (r) { setTimeout(r, 0); });
+    }
     done();
+    window.__adPreferMini = false;
+    try { var bx = document.getElementById('ad-cancel-btn'); if (bx) bx.remove(); } catch (eR) { }
     if (!blobs.length) throw new Error('No se pudo crear la imagen'); window._adL = blobs; window._ad = blobs[0];
     out.innerHTML = (blobs.length > 1 ? '<div class="wr" style="justify-content:center;margin-bottom:14px"><button class="btn pri sm" data-act="ad-share-all">' + ic('share', 16).s + 'Compartir / guardar las ' + blobs.length + ' juntas</button><button class="btn sm" data-act="ad-zip">' + ic('download', 16).s + 'Todas en un ZIP</button></div>' : '') + blobs.map(function (b, i) { return '<div style="margin-bottom:14px"><img class="pv" style="max-height:420px" src="' + URL.createObjectURL(b) + '" alt="Vista previa"><div class="wr" style="justify-content:center;margin-top:10px"><button class="btn pri sm" data-act="ad-share" data-i="' + i + '">' + ic('share', 16).s + 'Compartir / guardar</button></div></div>'; }).join('') + '<p class="help">Revisa los precios y textos antes de publicarla.</p>';
-  } catch (e) { done(); toast(e.message, 'bad'); }
+  } catch (e) {
+    window.__adPreferMini = false;
+    try { var bx2 = document.getElementById('ad-cancel-btn'); if (bx2) bx2.remove(); } catch (eR2) { }
+    done();
+    if (String(e.message || e) === 'cancelado') toast('Generación cancelada');
+    else toast(e.message, 'bad');
+  }
 };
+ACT['ad-cal'] = function (el) { APP.ui.adCal = el.getAttribute('data-v'); save(); refresh(); };
 ACT['ad-share-all'] = async function () {
   var bl = window._adL || []; if (!bl.length) return;
   var done = busy('Preparando ' + bl.length + ' imágenes…');
@@ -3571,17 +3694,62 @@ ACT['ad-zip'] = async function () {
 ACT['ad-share'] = function (el) { var i = +((el && el.getAttribute && el.getAttribute('data-i')) || 0), b = (window._adL || [])[i] || window._ad; if (b) guardarArchivo(b, 'anuncio-' + (ST().slug || 'tienda') + (i ? '-' + (i + 1) : '') + '.jpg', 'Anuncio'); };
 
 /* ---------------- catálogo exportable ---------------- */
-async function refExport(st, id, cal) {
+/* Catálogo para compartir: las fotos van en WebP y con tamaño limitado, aunque en el teléfono estén guardadas en «Original» */
+var CATQ = { liviana: { g: 700, q: .72, z: 'e', k: 90000, n: 1 }, buena: { g: 1000, q: .78, z: 'c', k: 140000, n: 1 }, normal: { g: 1600, q: .84, z: 'd', k: 220000, n: 3 }, maxima: { g: 2400, q: .9, z: 'f', k: 420000, n: 3 }, mini: { g: 420, q: .7, z: 'c', k: 40000, n: 1 } };
+async function fotoCatalogo(blob, cal) {
+  var P = CATQ[cal === 'sin' ? 'buena' : cal]; if (!P || !blob) return blob;
+  try {
+    if (blob.type === 'image/webp' && blob.size <= P.k) return blob;
+    var img = await decodeImg(blob), cv = canvasDe(img, P.g, false); if (img.close) img.close();
+    var b = await toBlob(cv, 'image/webp', P.q); if (!b || b.type !== 'image/webp') return blob;
+    return b.size < blob.size ? b : blob;
+  } catch (e) { return blob; }
+}
+/* App: antes de armar el archivo, deja junto a cada foto grande una copia WebP liviana (.c / .d); se guarda y las próximas veces ya está lista */
+async function prepararCat(st, cal, sinAg, set) {
+  if (!CATQ[cal] || cal === 'mini') return;
+  var max = CATQ[cal].n, ids = [];
+  st.prods.forEach(function (p) {
+    if (p.vis === false || !p.nombre) return;
+    if (sinAg) { var sk = stockDe(p); if (!p.disp || (sk !== null && sk <= 0)) return; }
+    p.fotos.slice(0, max).forEach(function (f) { if (set[f]) ids.push([f, cal]); });
+  });
+  if (st.portada && set[st.portada]) ids.push([st.portada, 'normal']);
+  if (await nativoListo()) {
+    try {
+      var vistos = {}, items = [];
+      ids.forEach(function (x) { var P0 = CATQ[x[1]], k0 = x[0] + P0.z; if (vistos[k0]) return; vistos[k0] = 1; items.push({ id: x[0], z: P0.z, lado: P0.g, q: Math.round(P0.q * 100), k: P0.k }); });
+      if (items.length) { setBusyText('Optimizando fotos para el catálogo…'); await NAT.p.optimizar({ items: items }); }
+      return;
+    } catch (eN) { /* si falla, se usa el camino de siempre */ }
+  }
+  var Fs = fsPlug(), n = 0;
+  for (var i = 0; i < ids.length; i++) {
+    var id = ids[i][0], nv = ids[i][1], P = CATQ[nv];
+    try {
+      var ya = false; try { var stt = await Fs.stat({ path: 'fotos/' + id + '.' + P.z, directory: 'DATA' }); ya = !!(stt && stt.size > 0); } catch (e0) { }
+      if (!ya) {
+        var rec = await fotoGet(id, 'g'), b = rec && (rec.g || rec.t);
+        if (b) { var c = await fotoCatalogo(b, nv); if (c !== b) await fsEscribir(id, P.z, c); }
+        try { delete MEMF[id]; } catch (e2) { }
+      }
+    } catch (e1) { }
+    n++; if (n % 3 === 0) { setBusyText('Optimizando fotos para el catálogo… ' + (i + 1) + '/' + ids.length); await new Promise(function (r) { setTimeout(r, 0); }); }
+  }
+}
+async function refExport(st, id, cal, natSet) {
   if (cal === 'sin') return null;
+  /* Con el plugin nativo la foto no se lee aquí: se deja una marca y Java la escribe directo desde el archivo */
+  if (natSet && natSet[id]) { var tk = function (z) { return '@@F:' + id + ':' + z + '@@'; }; return cal === 'mini' ? { t: tk('t'), g: tk('t') } : { t: tk('t'), g: tk((CATQ[cal] || CATQ.buena).z) }; }
   var rec = await fotoGet(id);
-  if (rec) { var t = await blobAURI(rec.t || rec.g); if (cal === 'mini') return { t: t, g: t }; return { t: t, g: await blobAURI(rec.g) }; }
+  if (rec) { var t = await blobAURI(await fotoCatalogo(rec.t || rec.g, 'mini')); if (cal === 'mini') return { t: t, g: t }; return { t: t, g: await blobAURI(await fotoCatalogo(rec.g || rec.t, cal)) }; }
   var r = st.fotosMap[id]; if (!r) return null; if (!r.k) return r;
   /* foto que solo está en la nube (otro teléfono): se baja si hay conexión */
   try { var t2 = await dbGet('fotos/' + st.slug + '/' + r.k + '/t', true); if (!t2) return null; if (cal === 'mini') return { t: t2, g: t2 }; return { t: t2, g: (await dbGet('fotos/' + st.slug + '/' + r.k + '/g', true)) || t2 }; } catch (e) { return null; }
 }
-async function datosExport(st, cal, prog, sinAg) {
+async function datosExport(st, cal, prog, sinAg, natSet) {
   var tienda = buildTienda(st);
-  tienda.logo = st.logo ? await refExport(st, st.logo, 'mini') || undefined : undefined; tienda.portada = st.portada ? await refExport(st, st.portada, cal === 'sin' ? 'sin' : 'normal') || undefined : undefined;
+  tienda.logo = st.logo ? await refExport(st, st.logo, 'mini', natSet) || undefined : undefined; tienda.portada = st.portada ? await refExport(st, st.portada, cal === 'sin' ? 'sin' : 'normal', natSet) || undefined : undefined;
   if (tienda.logo === undefined) delete tienda.logo; if (tienda.portada === undefined) delete tienda.portada;
   var cats = {}; st.cats.forEach(function (c, i) { cats[c.id] = { n: c.n, o: i }; });
   var prods = {}, lista = [];
@@ -3590,11 +3758,11 @@ async function datosExport(st, cal, prog, sinAg) {
     if (sinAg) { var sk = stockDe(p); if (!p.disp || (sk !== null && sk <= 0)) continue; }
     lista.push([p, i]);
   }
-  var max = cal === 'normal' ? 3 : 1;
+  var max = (CATQ[cal] || CATQ.buena).n;
   /* De 6 en 6 a la vez (las lecturas de fotos se solapan) y cediendo la pantalla entre tandas: más rápido y sin congelarse */
   for (var k = 0; k < lista.length; k += 6) {
     var lote = lista.slice(k, k + 6), res = await Promise.all(lote.map(async function (pi) {
-      var p = pi[0], o = buildProd(st, p, pi[1]), n = Math.min(max, p.fotos.length), rs = await Promise.all(p.fotos.slice(0, n).map(function (fid) { return refExport(st, fid, cal); })), f = rs.filter(Boolean);
+      var p = pi[0], o = buildProd(st, p, pi[1]), n = Math.min(max, p.fotos.length), rs = await Promise.all(p.fotos.slice(0, n).map(function (fid) { return refExport(st, fid, cal, natSet); })), f = rs.filter(Boolean);
       if (f.length) o.f = f; else delete o.f;
       return [p.id, o];
     }));
@@ -3621,6 +3789,26 @@ function armarHTML(emb) {
   t = t.replace('<script src="config.js" onerror="void 0"><\/script>', '').replace('<link rel="manifest" href="manifest.webmanifest">', '').replace('<link rel="icon" href="icons/icon-192.png">', '');
   return t;
 }
+/* Parte el catálogo en trozos de texto y marcas de foto (@@F:id:g|t@@) para que Java escriba cada foto directo del disco */
+function armarSegmentos(emb) {
+  var json = jsonSeguro(emb), segs = [], ult = 0, pref = '', re = /"@@F:([A-Za-z0-9_-]+):([gtcdef])@@"/g, m;
+  var marca = '<!--@@DATA@@-->', t = window.__CAT_TPL__, i = t.indexOf(marca);
+  var limpia = function (x) { return x.replace('<script src="config.js" onerror="void 0"><\/script>', '').replace('<link rel="manifest" href="manifest.webmanifest">', '').replace('<link rel="icon" href="icons/icon-192.png">', ''); };
+  var cab = limpia(t.slice(0, i)) + '<script>window.__CATALOGO_DATA__=', cola = limpia(t.slice(i + marca.length));
+  var primero = true;
+  while ((m = re.exec(json))) {
+    segs.push({ t: (primero ? cab : '') + pref + json.slice(ult, m.index) + '"' }); primero = false;
+    segs.push({ f: m[1], s: m[2] }); pref = '"'; ult = m.index + m[0].length;
+  }
+  segs.push({ t: (primero ? cab : '') + pref + json.slice(ult) + ';<\/script>' + cola });
+  return segs;
+}
+/* Compartir un archivo que ya está en el teléfono (lo dejó el plugin nativo) */
+async function compartirUri(uri, nombre, titulo) {
+  var C = window.Capacitor && window.Capacitor.Plugins;
+  try { await C.Share.share({ title: titulo || nombre, url: uri, dialogTitle: titulo || nombre }); return 'compartido'; }
+  catch (se) { if (se && /cancel/i.test(String(se.message || se))) return 'cancelado'; toast('Archivo guardado. Ábrelo desde Archivos / Descargas.', 'ok', 4500); return 'guardado'; }
+}
 ACT['exp-html'] = async function () {
   var st = ST(); if (!st.prods.some(function (p) { return p.vis !== false && p.nombre; })) { toast('Agrega al menos un producto visible', 'bad'); return; }
   var cal = await new Promise(function (res) {
@@ -3628,8 +3816,10 @@ ACT['exp-html'] = async function () {
     modal(html`<h2>Fotos del archivo</h2><p class="help">Más fotos = archivo más pesado. Con ${st.prods.length} productos:</p><div class="card flat">
       <a class="li tap" data-act="m-pick" data-v="sin" style="min-height:58px"><div class="tx"><b>Sin fotos</b><span>El más liviano (unos KB)</span></div></a>
       <a class="li tap" data-act="m-pick" data-v="mini" style="min-height:58px"><div class="tx"><b>Miniaturas</b><span>Una foto pequeña por producto · ≈ ${Math.max(1, Math.round(st.prods.length * 0.02))} MB</span></div></a>
-      <a class="li tap" data-act="m-pick" data-v="buena" style="min-height:58px"><div class="tx"><b>Buena calidad</b><span>Una foto completa y nítida por producto · ≈ ${Math.max(1, Math.round(st.prods.length * 0.1))} MB</span></div></a>
-      <a class="li tap" data-act="m-pick" data-v="normal" style="min-height:58px"><div class="tx"><b>Alta calidad</b><span>Hasta 3 fotos nítidas por producto · pesa mucho con muchos productos</span></div></a></div>`);
+      <a class="li tap" data-act="m-pick" data-v="liviana" style="min-height:58px"><div class="tx"><b>Liviana</b><span>Una foto de 700 px por producto · ≈ ${Math.max(1, Math.round(st.prods.length * 0.06))} MB</span></div></a>
+      <a class="li tap" data-act="m-pick" data-v="buena" style="min-height:58px"><div class="tx"><b>Buena calidad</b><span>Una foto de 1000 px por producto · ≈ ${Math.max(1, Math.round(st.prods.length * 0.1))} MB</span></div></a>
+      <a class="li tap" data-act="m-pick" data-v="normal" style="min-height:58px"><div class="tx"><b>Alta calidad</b><span>Hasta 3 fotos de 1600 px por producto · ≈ ${Math.max(1, Math.round(st.prods.length * 0.3))} MB</span></div></a>
+      <a class="li tap" data-act="m-pick" data-v="maxima" style="min-height:58px"><div class="tx"><b>Máxima</b><span>Hasta 3 fotos de 2400 px · ≈ ${Math.max(1, Math.round(st.prods.length * 0.6))} MB, pesa mucho</span></div></a></div>`);
   });
   if (!cal) return;
   var nAg = st.prods.filter(function (p) { var sk = stockDe(p); return p.vis !== false && p.nombre && (!p.disp || (sk !== null && sk <= 0)); }).length, sinAg = false;
@@ -3644,17 +3834,35 @@ ACT['exp-html'] = async function () {
   }
   var done = busy('Creando el archivo…');
   try {
-    var emb = await datosExport(st, cal, function (i, n) { setBusyText('Preparando productos… ' + i + '/' + n); }, sinAg), blobHtml = armarBlobHTML(emb);
-    if (!Object.keys(emb.data.productos).length) { done(); toast('No queda ningún producto disponible para el archivo', 'bad', 4000); return; }
-    setBusyText('Empaquetando en un solo ZIP…');
     var htmlName = 'catalogo-' + (st.slug || slugDe(st.nombre) || 'tienda') + '.html';
     var zipName = 'catalogo-' + (st.slug || slugDe(st.nombre) || 'tienda') + '.zip';
-    var blob = await enZipUnico(blobHtml, htmlName);
+    var prog = function (i, n) { setBusyText('Preparando productos… ' + i + '/' + n); };
+    var emb = null, blobHtml = null, blob = null, nres = null;
+    /* Camino rápido (app): Java lee las fotos del disco, arma el HTML y lo comprime. Si algo falla se usa el camino de siempre. */
+    if (cal !== 'sin' && await nativoListo()) {
+      try {
+        var idsN = idsBackup(), fal = ((await NAT.p.existen({ ids: idsN })) || {}).faltan || [], faltan = {}, setN = {};
+        fal.forEach(function (x) { faltan[x] = 1; }); idsN.forEach(function (x) { if (!faltan[x]) setN[x] = 1; });
+        await prepararCat(st, cal, sinAg, setN);
+        var embN = await datosExport(st, cal, prog, sinAg, setN);
+        if (!Object.keys(embN.data.productos).length) { done(); toast('No queda ningún producto disponible para el archivo', 'bad', 4000); return; }
+        setBusyText('Armando el archivo…');
+        nres = await NAT.p.armarHtml({ nombre: zipName, entrada: htmlName, segmentos: armarSegmentos(embN) });
+        emb = embN;
+      } catch (en) { nres = null; }
+    }
+    if (!nres) {
+      emb = await datosExport(st, cal, prog, sinAg); blobHtml = armarBlobHTML(emb);
+      if (!Object.keys(emb.data.productos).length) { done(); toast('No queda ningún producto disponible para el archivo', 'bad', 4000); return; }
+      setBusyText('Empaquetando en un solo ZIP…');
+      blob = await enZipUnico(blobHtml, htmlName);
+    }
     done();
-    var mb = (blob.size / 1048576).toFixed(1), r = await guardarArchivo(blob, zipName, 'Catálogo de ' + st.nombre);
+    var tam = nres ? nres.size : blob.size, mb = (tam / 1048576).toFixed(1);
+    var r = nres ? await compartirUri(nres.uri, zipName, 'Catálogo de ' + st.nombre) : await guardarArchivo(blob, zipName, 'Catálogo de ' + st.nombre);
     var conFoto = cal && cal !== 'sin';
     var msg = 'ZIP de ' + mb + ' MB (1 archivo) ' + (r === 'descargado' ? 'descargado' : r === 'cancelado' ? 'listo' : 'compartido');
-    if (conFoto && blobHtml.size < 50000 && st.prods.some(function (p) { return p.fotos && p.fotos.length; })) {
+    if (!nres && conFoto && blobHtml.size < 50000 && st.prods.some(function (p) { return p.fotos && p.fotos.length; })) {
       toast(msg + ' · AVISO: casi no hay fotos embebidas', 'bad', 6500);
     } else {
       toast(msg + ' · Dentro: ' + htmlName, '', 4000);
@@ -3805,13 +4013,42 @@ ACT['imp-file'] = async function () {
 };
 /* Fotos desde la copia de seguridad de «Catálogo de productos» (datos.json + fotos/ID.jpg y fotos/ID__gN.jpg), emparejadas por SKU (o por nombre exacto si no hay SKU) */
 function tipoImg(u8) { return (u8[0] === 0x52 && u8[1] === 0x49 && u8[8] === 0x57) ? 'image/webp' : (u8[0] === 0x89 && u8[1] === 0x50) ? 'image/png' : 'image/jpeg'; }
+function pedirFotosCopia(conFoto, total) {
+  var a = new Promise(function (res) {
+    MODAL.res = res;
+    modal(html`<h2>Fotos de la copia</h2><p class="help">${conFoto} de tus ${total} productos ya tienen foto.</p><div class="card flat">
+      <a class="li tap" data-act="m-pick" data-v="nuevas" style="min-height:58px"><div class="tx"><b>Solo a los que no tienen foto</b><span>Los productos que ya tienen foto no se tocan.</span></div></a>
+      <a class="li tap" data-act="m-pick" data-v="todas" style="min-height:58px"><div class="tx"><b>Reemplazar también las que ya tienen</b><span>Los productos que coincidan se quedan con las fotos de la copia.</span></div></a></div>`);
+  });
+  return a.then(function (modo) {
+    if (!modo) return null;
+    var cur = APP.cfg.calidad || 'media', NM = { minima: 'Mínima', extrema: 'Extrema', ahorro: 'Ahorro', media: 'Media', alta: 'Alta', maxima: 'Máxima', original: 'Original' };
+    return new Promise(function (res) {
+      MODAL.res = res;
+      modal(html`<h2>Calidad de las fotos</h2><div class="card flat">
+        <a class="li tap" data-act="m-pick" data-v="original" style="min-height:58px"><div class="tx"><b>Original (recomendado)</b><span>Tal como se ven en el catálogo, sin recomprimir. Pesan más.</span></div></a>
+        <a class="li tap" data-act="m-pick" data-v="alta" style="min-height:58px"><div class="tx"><b>Alta (~1600 px)</b><span>Casi original, más manejable en el teléfono.</span></div></a>
+        <a class="li tap" data-act="m-pick" data-v="media" style="min-height:58px"><div class="tx"><b>Media (~1000 px)</b><span>Buen equilibrio tamaño / nitidez.</span></div></a>
+        <a class="li tap" data-act="m-pick" data-v="ajustes" style="min-height:58px"><div class="tx"><b>La de Ajustes (${NM[cur] || cur})</b><span>Se reducen y comprimen según ese ajuste.</span></div></a></div>`);
+    }).then(function (cal) { return cal ? { modo: modo, cal: cal } : null; });
+  });
+}
 async function importarFotosCopia(f) {
-  var st = ST(), out = $('#imp-out'), done = busy('Leyendo la copia…');
+  var st = ST(), out = $('#imp-out'), done = busy('Leyendo la copia…'), calPrev = APP.cfg.calidad;
   try {
     var Z = await jszip(), zip = await Z.loadAsync(await f.arrayBuffer()), dj = zip.file('datos.json');
     if (!dj) throw new Error('Este .zip no es una copia de «Catálogo de productos» (falta datos.json).');
     var j = JSON.parse(await dj.async('string')), lista = j.products || (j.data && j.data.products) || [];
     if (!lista.length) throw new Error('La copia no trae productos.');
+    done(); done = function () { };
+    var opc = await pedirFotosCopia(st.prods.filter(function (p) { return p.fotos.length; }).length, st.prods.length);
+    if (!opc) return;
+    var reemplazar = opc.modo === 'todas';
+    if (opc.cal === 'original') APP.cfg.calidad = 'original';
+    else if (opc.cal === 'alta') APP.cfg.calidad = 'alta';
+    else if (opc.cal === 'media') APP.cfg.calidad = 'media';
+    /* «ajustes» deja APP.cfg.calidad como está */
+    done = busy('Importando fotos…');
     var bySku = {}, byNom = {}; st.prods.forEach(function (p) { if (p.sku) bySku[skuKey(p.sku)] = p; byNom[norm(p.nombre)] = p; });
     var ok = 0, fotos = 0, porNombre = 0, yaTenia = 0, sinFoto = 0, sinMatch = [], i, k;
     for (i = 0; i < lista.length; i++) {
@@ -3822,13 +4059,15 @@ async function importarFotosCopia(f) {
       var p = (o.sku && bySku[skuKey(o.sku)]) || null, pn = false;
       if (!p && !o.sku) { p = byNom[norm(o.name || '')] || null; pn = !!p; }
       if (!p) { sinMatch.push((o.sku ? o.sku + ' · ' : '') + (o.name || '')); continue; }
-      if (p.fotos.length) { yaTenia++; continue; }
+      if (p.fotos.length && !reemplazar) { yaTenia++; continue; }
       setBusyText('Foto ' + (ok + 1) + ' · ' + (p.nombre || '').slice(0, 28) + '…');
+      var previas = p.fotos, antes = fotos; if (reemplazar) p.fotos = [];
       for (k = 0; k < archivos.length && p.fotos.length < 5; k++) {
         var u8 = new Uint8Array(await archivos[k].async('arraybuffer'));
         try { p.fotos.push(await guardarFoto(new Blob([u8], { type: tipoImg(u8) }))); fotos++; } catch (e) { }
       }
-      if (p.fotos.length) { p.u = Date.now(); ok++; if (pn) porNombre++; }
+      if (fotos === antes) p.fotos = previas; /* si no se pudo leer ninguna, se conservan las de antes */
+      else { p.u = Date.now(); ok++; if (pn) porNombre++; }
     }
     if (ok) touch(st);
     done();
@@ -3839,6 +4078,7 @@ async function importarFotosCopia(f) {
       (ok ? '<br>Publica para que las vean tus clientes.' : '') + '</div>';
     if (out) out.innerHTML = msg; toast(ok ? 'Fotos asignadas ✓' : 'No se asignó ninguna foto', ok ? '' : 'bad');
   } catch (e) { done(); toast(e.message, 'bad', 5000); }
+  finally { APP.cfg.calidad = calPrev; }
 }
 function pintarImport() {
   var out = $('#imp-out'); if (!out || !IMP) return; var heads = IMP.rows[0];
@@ -3883,8 +4123,15 @@ function idsBackup() {
   [st0.logo, st0.portada, st0.espec].forEach(function (x) { if (x && ids.indexOf(x) < 0) ids.push(x); });
   return ids;
 }
-/* nivel: 'mini' = miniaturas (liviano) · 'completa' = foto grande + miniatura tal como están guardadas, sin recomprimir.
+/* nivel: 'mini' | 'media' (~1000px) | 'alta' (~1600px) | 'completa' (original, sin recomprimir).
    parte {i, n}: solo las fotos de la tanda i (para copias grandes en varios archivos) */
+function sufijoCalidadBk(nivel, conFotos) {
+  if (!conFotos) return '-sin-fotos';
+  if (nivel === 'completa') return '';
+  if (nivel === 'alta') return '-alta';
+  if (nivel === 'media') return '-media';
+  return '-miniaturas';
+}
 async function crearBackup(conFotos, nivel, parte) {
   var Z = await jszip(), zip = new Z();
   var data = JSON.parse(JSON.stringify(APP));
@@ -3912,6 +4159,12 @@ async function crearBackup(conFotos, nivel, parte) {
         if (nivel === 'completa') {
           if (r.g) zip.file('fotos/' + r.id + '-g.bin', r.g);
           if (r.t && r.t !== r.g) zip.file('fotos/' + r.id + '-t.bin', r.t);
+        } else if (nivel === 'alta' || nivel === 'media') {
+          var src = r.g || r.t;
+          var mid = await fotoCatalogo(src, nivel === 'alta' ? 'normal' : 'buena');
+          if (mid) zip.file('fotos/' + r.id + '-g.bin', mid);
+          else if (r.t) zip.file('fotos/' + r.id + '-g.bin', r.t);
+          else if (r.g) zip.file('fotos/' + r.id + '-g.bin', r.g);
         } else {
           var blob = r.t || r.g;
           if (blob) zip.file('fotos/' + r.id + '-g.bin', blob);
@@ -3936,19 +4189,115 @@ function pedirCalidadBackup() {
   return new Promise(function (res) {
     MODAL.res = res;
     modal(html`<h2>Calidad de las fotos</h2><p class="help">${n} fotos en esta tienda.</p><div class="card flat">
-      <a class="li tap" data-act="m-pick" data-v="completa" style="min-height:58px"><div class="tx"><b>Alta calidad (recomendado)</b><span>Las fotos como están guardadas, sin recomprimir. Pesa más; si son muchas se divide en varios archivos.</span></div></a>
-      <a class="li tap" data-act="m-pick" data-v="mini" style="min-height:58px"><div class="tx"><b>Miniaturas</b><span>Muy liviana, pero las fotos quedan pequeñas al restaurar.</span></div></a></div>`);
+      <a class="li tap" data-act="m-pick" data-v="completa" style="min-height:58px"><div class="tx"><b>Original (máxima)</b><span>Las fotos tal como están guardadas, sin recomprimir. El archivo más pesado; ideal para archivo completo.</span></div></a>
+      <a class="li tap" data-act="m-pick" data-v="alta" style="min-height:58px"><div class="tx"><b>Alta calidad</b><span>Recomprime a ~1600 px. Casi original, más manejable.</span></div></a>
+      <a class="li tap" data-act="m-pick" data-v="media" style="min-height:58px"><div class="tx"><b>Calidad media (recomendada)</b><span>~1000 px. Buen equilibrio para WhatsApp, Drive o Telegram.</span></div></a>
+      <a class="li tap" data-act="m-pick" data-v="mini" style="min-height:58px"><div class="tx"><b>Miniaturas</b><span>Muy liviana y rápida. Las fotos quedan pequeñas al restaurar.</span></div></a></div>`);
   });
 }
-async function restaurarBackup(file) {
+/* Al restaurar fotos: calidad de destino (tal cual del zip, o bajar) */
+function pedirCalidadRestaurar(ab) {
+  return new Promise(function (res) {
+    MODAL.res = res;
+    var info = ab && ab.lado ? html`<p class="help">Las fotos de la copia llegan hasta ~${ab.lado} px.</p>` : '';
+    modal(html`<h2>Calidad al restaurar</h2>${info}<div class="card flat">
+      <a class="li tap" data-act="m-pick" data-v="talcual" style="min-height:58px"><div class="tx"><b>Tal como vienen (recomendado)</b><span>Sin recomprimir. Si ya tienes una foto mejor en el teléfono, se conserva.</span></div></a>
+      <a class="li tap" data-act="m-pick" data-v="media" style="min-height:58px"><div class="tx"><b>Bajar a media (~1000 px)</b><span>Ahorra espacio. Útil si la copia es muy pesada.</span></div></a>
+      <a class="li tap" data-act="m-pick" data-v="mini" style="min-height:58px"><div class="tx"><b>Solo miniaturas</b><span>La más liviana. Solo para ver el catálogo; no apta para publicar.</span></div></a></div>`);
+  });
+}
+/* Abre la copia y cuenta lo que trae (tiendas, fotos y el tamaño de las fotos) */
+async function abrirBackup(file) {
   var Z = await jszip(), zip = await Z.loadAsync(await file.arrayBuffer()), f = zip.file('datos.json'); if (!f) throw new Error('Este archivo no es una copia del Catálogo de Productos.');
   var j = JSON.parse(await f.async('string')); if ((j.app !== 'catalogo' && j.app !== LEGADO) || !j.data) throw new Error('Copia no válida.');
-  var n = 0, ids = {};
-  zip.forEach(function (p) { var m = /^fotos\/(.+)-([gt])\.bin$/.exec(p); if (m) ids[m[1]] = 1; });
-  for (var id in ids) { var g = zip.file('fotos/' + id + '-g.bin'), t = zip.file('fotos/' + id + '-t.bin'); var gb = g ? new Blob([await g.async('arraybuffer')], { type: 'image/webp' }) : null, tb = t ? new Blob([await t.async('arraybuffer')], { type: 'image/webp' }) : gb; await fotoPut({ id: id, g: gb, t: tb }); n++; if (n % 5 === 0) { setBusyText('Restaurando fotos… ' + n + '/' + Object.keys(ids).length); await new Promise(function (rs) { setTimeout(rs, 0); }); } }
-  j.data.stores.forEach(function (s) { var i = APP.stores.findIndex(function (x) { return x.id === s.id; }); migrar(s); s.dirty = true; if (i >= 0) APP.stores[i] = s; else APP.stores.push(s); });
-  try { if (j.data.cfg) ['gh', 'srv', 'fb'].forEach(function (k) { var c = j.data.cfg[k]; if (!c) return; var cur = APP.cfg[k] || (APP.cfg[k] = {}); Object.keys(c).forEach(function (f) { if (!cur[f]) cur[f] = c[f]; }); }); } catch (e) { }
-  if (!APP.cur && APP.stores[0]) APP.cur = APP.stores[0].id; save(true); return { tiendas: j.data.stores.length, fotos: n };
+  var ids = {}; zip.forEach(function (p) { var m = /^fotos\/(.+)-([gt])\.bin$/.exec(p); if (m) ids[m[1]] = 1; });
+  var lado = 0;
+  try { var k0 = Object.keys(ids)[0]; if (k0) { var e0 = zip.file('fotos/' + k0 + '-g.bin') || zip.file('fotos/' + k0 + '-t.bin'), im0 = await decodeImg(new Blob([await e0.async('arraybuffer')])); lado = Math.max(im0.width, im0.height); if (im0.close) im0.close(); } } catch (e) { }
+  return { zip: zip, j: j, ids: Object.keys(ids), lado: lado };
+}
+/* Pregunta qué restaurar de la copia (ab = lo que trae la copia; null si aún no se ha abierto) */
+function pedirModoRestaurar(ab) {
+  return new Promise(function (res) {
+    MODAL.res = res;
+    var info = ab ? html`<p class="help">${(ab.j.data.stores || []).length} tienda(s) · ${ab.ids.length} foto(s)${ab.lado ? ' · fotos de hasta ' + ab.lado + ' px' : ''}</p>` : '';
+    modal(html`<h2>Restaurar copia</h2>${info}<div class="card flat">
+      <a class="li tap" data-act="m-pick" data-v="todo" style="min-height:58px"><div class="tx"><b>Datos y fotos</b><span>Las tiendas de la copia reemplazan a las que tengan el mismo identificador. Las fotos se copian tal cual, sin recomprimir.</span></div></a>
+      <a class="li tap" data-act="m-pick" data-v="datos" style="min-height:58px"><div class="tx"><b>Solo los datos</b><span>Productos, precios y ajustes. Las fotos que ya tienes en el teléfono no se tocan.</span></div></a>
+      <a class="li tap" data-act="m-pick" data-v="fotos" style="min-height:58px"><div class="tx"><b>Solo las fotos</b><span>Vuelve a importar las fotos sin tocar tus productos, precios ni existencias.</span></div></a></div>
+      <p class="help" style="margin-top:8px">Si el teléfono ya tiene una foto de mayor calidad que la de la copia, se conserva la mejor.</p>`);
+  });
+}
+async function restaurarBackup(file, modo, ab, calRest) {
+  ab = ab || await abrirBackup(file); modo = modo || 'todo'; calRest = calRest || 'talcual';
+  var zip = ab.zip, j = ab.j, n = 0, mantenidas = 0, tot = ab.ids.length;
+  if (modo !== 'datos') {
+    for (var k = 0; k < tot; k++) {
+      var id = ab.ids[k], g = zip.file('fotos/' + id + '-g.bin'), t = zip.file('fotos/' + id + '-t.bin');
+      var gb = g ? new Blob([await g.async('arraybuffer')], { type: 'image/webp' }) : null, tb = t ? new Blob([await t.async('arraybuffer')], { type: 'image/webp' }) : gb;
+      /* Opcional: bajar calidad al restaurar */
+      if (calRest === 'media' && gb) {
+        try { gb = await fotoCatalogo(gb, 'buena') || gb; tb = gb; } catch (eM) { }
+      } else if (calRest === 'mini' && (gb || tb)) {
+        try {
+          var srcM = tb || gb;
+          var miniB = await fotoCatalogo(srcM, 'mini');
+          gb = miniB || srcM; tb = gb;
+        } catch (eMi) { }
+      }
+      var ex = null; try { ex = await fotoGet(id); } catch (e0) { ex = null; }
+      /* Si el usuario eligió «tal cual», nunca bajar: se conserva la mejor del teléfono */
+      if (ex && calRest === 'talcual') {
+        if (ex.g && ex.g.size && (!gb || ex.g.size >= gb.size)) { if (gb) mantenidas++; gb = ex.g; }
+        if (ex.t && ex.t.size && (!tb || ex.t.size >= tb.size)) tb = ex.t;
+      }
+      await fotoPut({ id: id, g: gb || tb, t: tb || gb });
+      try { delete PURL[id + '|g']; delete PURL[id + '|t']; } catch (e1) { }
+      n++; if (n % 5 === 0) { setBusyText('Restaurando fotos… ' + n + '/' + tot); await new Promise(function (rs) { setTimeout(rs, 0); }); }
+    }
+  }
+  return aplicarCopia(j, n, modo, mantenidas);
+}
+function aplicarCopia(j, n, modo, mantenidas) {
+  if ((j.app !== 'catalogo' && j.app !== LEGADO) || !j.data) throw new Error('Copia no válida.');
+  modo = modo || 'todo';
+  if (modo !== 'fotos') {
+    j.data.stores.forEach(function (s) { var i = APP.stores.findIndex(function (x) { return x.id === s.id; }); migrar(s); s.dirty = true; if (i >= 0) APP.stores[i] = s; else APP.stores.push(s); });
+    try { if (j.data.cfg) ['gh', 'srv', 'fb'].forEach(function (k) { var c = j.data.cfg[k]; if (!c) return; var cur = APP.cfg[k] || (APP.cfg[k] = {}); Object.keys(c).forEach(function (f) { if (!cur[f]) cur[f] = c[f]; }); }); } catch (e) { }
+    if (!APP.cur && APP.stores[0]) APP.cur = APP.stores[0].id;
+  }
+  save(true); return { tiendas: modo === 'fotos' ? 0 : j.data.stores.length, fotos: n, mantenidas: mantenidas || 0, modo: modo };
+}
+function msgRestaurado(r) {
+  var f = r.fotos + ' foto(s)' + (r.mantenidas ? ' (en ' + r.mantenidas + ' se conservó la que ya tenías por tener mejor calidad)' : '');
+  return r.modo === 'fotos' ? 'Importadas ' + f + ' ✓' : r.modo === 'datos' ? 'Restauradas ' + r.tiendas + ' tienda(s) ✓' : 'Restauradas ' + r.tiendas + ' tienda(s) y ' + f + ' ✓';
+}
+async function flujoRestaurar() {
+  var guardar = async function () { try { if (window.panelBk && window.panelBk.snapGuardar) await window.panelBk.snapGuardar(true); } catch (e2) { } };
+  /* App: Java elige, descomprime y deja las fotos como archivos (rápido, no se traba) */
+  if (await nativoListo()) {
+    var mN = await pedirModoRestaurar(null); if (!mN) return;
+    await guardar(); var d0 = busy('Elige la copia…');
+    try {
+      var rn = await NAT.p.elegirZip({ modo: mN, conservarMejor: true });
+      if (rn && rn.cancelado) { d0(); return; }
+      if (!rn || rn.invalido || !rn.datos) throw new Error('Este archivo no es una copia del Catálogo de Productos.');
+      setBusyText('Restaurando…'); MEMF = {}; PURL = {};
+      var r0 = aplicarCopia(JSON.parse(rn.datos), rn.fotos || 0, mN, rn.mantenidas || 0); d0();
+      toast(msgRestaurado(r0), 'ok', 5000); go('/'); return;
+    } catch (e0) { d0(); toast(e0.message || 'No se pudo restaurar', 'bad', 5000); return; }
+  }
+  var f = await elegirArchivo('.zip,application/zip,application/octet-stream'); if (!f) return;
+  var done = busy('Leyendo la copia…'), ab, modo, calRest = 'talcual';
+  try { ab = await abrirBackup(f); done(); } catch (e) { done(); toast(e.message || 'No se pudo leer la copia', 'bad', 5000); return; }
+  modo = ab.ids.length ? await pedirModoRestaurar(ab) : ((await confirmar('¿Restaurar esta copia?', 'Restaurar', false, 'Las tiendas de la copia reemplazan a las que tengan el mismo identificador. Esta copia no trae fotos.')) ? 'datos' : null);
+  if (!modo) return;
+  if (modo !== 'datos' && ab.ids.length) {
+    calRest = await pedirCalidadRestaurar(ab);
+    if (!calRest) return;
+  }
+  await guardar();
+  done = busy('Restaurando…');
+  try { var r = await restaurarBackup(f, modo, ab, calRest); done(); toast(msgRestaurado(r), 'ok', 5000); go('/'); } catch (e3) { done(); toast(e3.message || 'No se pudo restaurar', 'bad', 5000); }
 }
 
 /* ---------------- Cuenta y conexión ---------------- */
@@ -3967,7 +4316,10 @@ route(/^\/conexion$/, function () {
       <label class="lbl">Dirección de la base de datos</label><input class="in" data-f="dbURL" value="${c.dbURL}" placeholder="https://tu-proyecto-default-rtdb.firebaseio.com" autocapitalize="none">
       <label class="lbl">Clave de API web</label><input class="in" data-f="apiKey" value="${c.apiKey}" placeholder="AIza…" autocapitalize="none">
       <label class="lbl">Dirección pública del catálogo</label><input class="in" data-f="base" value="${c.base}" placeholder="https://tuusuario.github.io/catalogo/" autocapitalize="none"><p class="help" style="margin:6px 0 0">Donde subiste <b>index.html</b> (GitHub Pages, Netlify…). Los enlaces y QR se arman con esta dirección.</p></div>
-    <div class="card"><h2>Fotos</h2><label class="lbl">Calidad de las fotos</label><select class="in" data-f="calidad"><option value="ahorro" ${c.calidad === 'ahorro' ? raw('selected') : ''}>Ahorro de datos (más livianas)</option><option value="media" ${c.calidad === 'media' ? raw('selected') : ''}>Media (recomendada)</option><option value="alta" ${c.calidad === 'alta' ? raw('selected') : ''}>Alta (más pesadas)</option><option value="maxima" ${c.calidad === 'maxima' ? raw('selected') : ''}>Máxima (fotos grandes y nítidas)</option></select><p class="help" style="margin:6px 0 0">Vale para las fotos que guardes de ahora en adelante; las ya guardadas no cambian.</p>
+    <div class="card"><h2>Fotos</h2><label class="lbl">Calidad de las fotos</label><select class="in" data-f="calidad"><option value="minima" ${c.calidad === 'minima' ? raw('selected') : ''}>Mínima (muy livianas, 540 px)</option><option value="ahorro" ${c.calidad === 'ahorro' ? raw('selected') : ''}>Ahorro de datos (más livianas)</option><option value="media" ${c.calidad === 'media' ? raw('selected') : ''}>Media (recomendada)</option><option value="alta" ${c.calidad === 'alta' ? raw('selected') : ''}>Alta (más pesadas)</option><option value="maxima" ${c.calidad === 'maxima' ? raw('selected') : ''}>Máxima (fotos grandes y nítidas)</option><option value="extrema" ${c.calidad === 'extrema' ? raw('selected') : ''}>Extrema (hasta 3000 px, casi sin pérdida)</option><option value="original" ${c.calidad === 'original' ? raw('selected') : ''}>Original (sin recomprimir, como vienen)</option></select><p class="help" style="margin:6px 0 0">Vale para las fotos que guardes de ahora en adelante (también al importar la copia de «Catálogo de productos»); las ya guardadas no cambian. «Original» conserva cada foto exactamente como viene: la mejor calidad, pero pesa más.</p>
+      <label class="lbl" style="margin-top:12px">Calidad al subir al sitio (publicar)</label><select class="in" data-f="calPub">${Object.keys(PUBNM).map(function (k) { return html`<option value="${k}" ${(c.calPub || 'guardada') === k ? raw('selected') : ''}>${PUBNM[k]}</option>`; })}</select>
+      <div class="wr" style="margin-top:8px"><button class="btn sm" data-act="cal-prev">${ic('image', 16)}Vista previa</button></div>
+      <p class="help" style="margin:6px 0 0">Solo cambia lo que se sube a GitHub; tus fotos en el teléfono no se tocan. Se aplica a las fotos que subas de ahora en adelante; para cambiar las ya publicadas usa «Volver a publicar todo».</p>
       <label class="lbl">Clave de imgbb (opcional)</label><input class="in" data-f="imgbb" value="${c.imgbb}" placeholder="Sin clave, las fotos van a tu base de datos" autocapitalize="none"><p class="help" style="margin:6px 0 0">Con imgbb las fotos cargan desde su red; sin ella se guardan en tu Firebase.</p></div>
     <div class="card"><h2>Tasa de elTOQUE (opcional)</h2><input class="in" data-f="eltoque" value="${c.eltoque || ''}" placeholder="Token de elTOQUE" autocapitalize="none"></div>
     <div class="card"><h2>IA para descripciones (opcional)</h2><p class="help" style="margin:0 0 6px">Sin esto, el botón «Generar» usa plantillas locales que funcionan sin internet.</p>
@@ -3996,10 +4348,7 @@ ACT.logout = async function () { if (await confirmar('¿Cerrar sesión?', 'Cerra
 ACT['nube-restaurar'] = async function () { var done = busy('Buscando en tu nube…'); try { var n = await restaurarDeNube(); done(); toast(n ? 'Se recuperaron ' + n + ' tienda(s)' : 'No hay tiendas nuevas en la nube'); if (n) go('/'); } catch (e) { done(); toast(e.message, 'bad', 4500); } };
 ACT['copy-cfg'] = function () { copiar(configJsTexto()); };
 ACT['bk-save'] = function (el) { el.setAttribute('data-v', el.getAttribute('data-f')); return ACT['bk-crear'](el); };
-ACT['bk-load'] = async function () {
-  var f = await elegirArchivo('.zip,application/zip'); if (!f) return; if (!(await confirmar('¿Restaurar esta copia?', 'Restaurar', false, 'Las tiendas de la copia reemplazan a las que tengan el mismo identificador.'))) return;
-  var done = busy('Restaurando…'); try { var r = await restaurarBackup(f); done(); toast('Restauradas ' + r.tiendas + ' tienda(s) y ' + r.fotos + ' foto(s)'); go('/'); } catch (e) { done(); toast(e.message, 'bad', 4500); }
-};
+ACT['bk-load'] = function () { return flujoRestaurar(); };
 ACT.repub = async function () { var st = ST(), bad = puedePublicar(st); if (bad) { toast(bad, 'bad', 4000); return; } var done = busy('Publicando todo…'); try { await publicar(st, { force: true }); done(); toast('Catálogo publicado ✓'); } catch (e) { done(); await aviso('No se pudo publicar', e.message); } };
 ACT['tienda-del'] = async function () {
   var st = ST(); if (!(await confirmar('¿Eliminar «' + st.nombre + '» de este teléfono?', 'Eliminar', true, 'Si ya la publicaste y tienes cuenta, la copia en la nube y el catálogo publicado no se borran.'))) return;
@@ -4029,14 +4378,23 @@ function slugCheck2(v) {
   if (!hayNube()) return;
   slugT2 = setTimeout(function () { dbGet('slugs/' + v, true).then(function (r) { if (!$('#nt-msg')) return; if (r && r.owner && (!logged() || r.owner !== APP.auth.uid)) { m.className = 'err'; m.textContent = 'Esa dirección no está disponible.'; } else { m.className = 'help'; m.style.color = 'var(--ok)'; m.textContent = '✓ Disponible'; } }).catch(function () { m.className = 'help'; m.textContent = 'No se pudo comprobar ahora; se verificará al publicar.'; }); }, 450);
 }
-ACT['nt-crear'] = function () {
+ACT['nt-crear'] = async function () {
   var D = window._NT; D.nombre = (D.nombre || '').trim();
   if (!D.nombre) { toast('Escribe el nombre del negocio', 'bad'); return; }
   if (!slugValido(D.slug)) { toast('Revisa la dirección del catálogo', 'bad'); return; }
   if (APP.stores.some(function (s) { return s.slug === D.slug; })) { toast('Ya usas esa dirección', 'bad'); return; }
   if (waNumero(D.wa).length < 10) { toast('Escribe tu WhatsApp con código de país (ej.: +53 5 555 1234)', 'bad', 4000); return; }
   var m = $('#nt-msg'); if (m && m.className === 'err') { toast(m.textContent, 'bad'); return; }
-  var st = nuevaTienda(D.nombre, D.slug, D.wa.trim(), (D.dir || '').trim()); APP.stores.push(st); APP.cur = st.id; save(true);
+  var primera = !APP.stores.length, g0 = APP.cfg.gh || {};
+  var st = nuevaTienda(D.nombre, D.slug, D.wa.trim(), (D.dir || '').trim()); APP.stores.push(st); APP.cur = st.id;
+  /* Con GitHub conectado, cada tienda nueva (no la primera) recibe su propio repositorio con el sitio ya desplegado */
+  if (!primera && g0.token && g0.owner && g0.repo && window.crearSitioTienda) {
+    st.sitioPend = true; save(true);
+    var done = busy('Creando el sitio de tu tienda…');
+    try { var url = await window.crearSitioTienda(st); setBusyText('Publicando tu catálogo…'); await publicar(st, {}); done(); toast('¡Tu tienda y su sitio están listos! ' + url, '', 6000); go('/'); return; }
+    catch (e) { done(); save(true); await aviso('Tienda creada, pero falta el sitio', (e.message || 'Error') + ' La tienda ya está guardada: el sitio se intentará crear de nuevo cuando pulses Publicar.'); go('/'); return; }
+  }
+  save(true);
   toast('¡Tu tienda está lista! Ahora agrega productos.'); go('/');
 };
 
@@ -4147,7 +4505,13 @@ if ('serviceWorker' in navigator && /^https?:/.test(location.protocol) && !windo
 /* ===== Conexión GitHub (sin Firebase ni imgbb): el panel publica en datos/catalogo.json e img/ del sitio ===== */
 (function () {
 var DK = ['dom', 'lun', 'mar', 'mie', 'jue', 'vie', 'sab'], N = function (x) { return num(x); };
-function G() { return APP.cfg.gh || (APP.cfg.gh = { owner: '', repo: '', branch: 'main', token: '' }); }
+function G() {
+  var base = APP.cfg.gh || (APP.cfg.gh = { owner: '', repo: '', branch: 'main', token: '' }), st = null;
+  try { st = ST(); } catch (e) { }
+  /* Una tienda con sitio propio publica en su repositorio; el token es el mismo */
+  if (st && st.gh && st.gh.repo) return { owner: st.gh.owner || base.owner, repo: st.gh.repo, branch: st.gh.branch || 'main', token: base.token };
+  return base;
+}
 function ok() { var g = G(); return !!(g.owner && g.repo && g.token); }
 function syncAuth() { APP.auth = ok() ? { uid: 'gh', email: G().owner + '/' + G().repo, idToken: '', exp: 9e15 } : null; }
 hayNube = ok; logged = ok; token = async function () { return ''; }; dbCall = async function () { return null; }; syncAuth();
@@ -4169,6 +4533,71 @@ async function gh(path, method, body, intento) {
   if (limite) throw new Error('GitHub sigue limitando las subidas. Espera unos minutos.');
   throw new Error(r.status === 401 ? 'Token inválido o vencido.' : (r.status === 403 || r.status === 404) ? 'Sin acceso al repositorio: revisa usuario, repositorio y que el token tenga «Contents: Read and write».' : (msg || 'Error de GitHub ' + r.status));
 }
+
+/* ---- Sitio propio por tienda: repositorio nuevo con el nombre de la tienda + GitHub Pages ---- */
+async function ghApi(path, method, body) {
+  var g = APP.cfg.gh || {}, r;
+  try { r = await fetchT('https://api.github.com' + path, { method: method || 'GET', cache: 'no-store', headers: { Authorization: 'Bearer ' + g.token, Accept: 'application/vnd.github+json', 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }, 60000); }
+  catch (e) { throw new Error('Sin conexión con GitHub.'); }
+  var j = await r.json().catch(function () { return {}; });
+  if (r.ok) return j;
+  var er = new Error(String(j.message || ('Error de GitHub ' + r.status))); er.status = r.status; throw er;
+}
+function sitioArchivo(p) {
+  if (/^(datos|\.github|img\/productos|node_modules)\//.test(p)) return false;
+  if (/^img\/marca\/.*\.webp$/i.test(p)) return false;
+  if (/^(README|LICENSE|CNAME)/i.test(p)) return false;
+  return true;
+}
+window.crearSitioTienda = async function (st) {
+  var g = APP.cfg.gh || {};
+  if (!g.token || !g.owner || !g.repo) throw new Error('Primero conecta GitHub (Menú → Cuenta y conexión).');
+  var nombre = st.slug, B = 'main', dueno = g.owner;
+  if (!st.gh || st.gh.repo !== nombre) {
+    setBusyText('Creando el repositorio «' + nombre + '»…');
+    try {
+      var rep = await ghApi('/user/repos', 'POST', { name: nombre, description: 'Catálogo de ' + st.nombre, private: false, auto_init: true });
+      dueno = (rep.owner && rep.owner.login) || dueno; B = rep.default_branch || 'main';
+    } catch (e) {
+      if (e.status === 422) throw new Error('Ya existe en tu GitHub un repositorio llamado «' + nombre + '». Usa otra dirección para la tienda o bórralo en GitHub.');
+      if (e.status === 401) throw new Error('El token de GitHub no es válido o venció.');
+      if (e.status === 403 || e.status === 404) throw new Error('Tu token de GitHub no puede crear repositorios. Crea uno clásico con permiso «repo», o uno fino con acceso a todos los repositorios y permisos Administration, Contents y Pages en lectura y escritura.');
+      throw e;
+    }
+    st.gh = { owner: dueno, repo: nombre, branch: B }; save(true);
+  } else { dueno = st.gh.owner || dueno; B = st.gh.branch || 'main'; }
+  var R = '/repos/' + dueno + '/' + nombre, T0 = '/repos/' + g.owner + '/' + g.repo;
+  setBusyText('Leyendo el sitio de plantilla…');
+  var T = await ghApi(T0 + '/git/trees/' + encodeURIComponent(g.branch || 'main') + '?recursive=1');
+  if (!T || !T.tree || T.truncated) throw new Error('El repositorio de plantilla es demasiado grande para copiarlo.');
+  var arch = T.tree.filter(function (x) { return x.type === 'blob' && sitioArchivo(x.path); });
+  if (!arch.some(function (x) { return x.path === 'index.html'; })) throw new Error('No encontré el sitio (index.html) en tu repositorio ' + g.owner + '/' + g.repo + '.');
+  var ents = [], i = 0, hechos = 0;
+  async function obrero() {
+    while (i < arch.length) {
+      var x = arch[i++], b = await ghApi(T0 + '/git/blobs/' + x.sha), nb = await ghApi(R + '/git/blobs', 'POST', { content: String(b.content).replace(/\s/g, ''), encoding: 'base64' });
+      ents.push({ path: x.path, mode: x.mode || '100644', type: 'blob', sha: nb.sha }); hechos++; setBusyText('Copiando el sitio… ' + hechos + '/' + arch.length);
+    }
+  }
+  await Promise.all([obrero(), obrero(), obrero(), obrero()]);
+  var vacio = await ghApi(R + '/git/blobs', 'POST', { content: '{}', encoding: 'utf-8' });
+  ents.push({ path: 'datos/catalogo.json', mode: '100644', type: 'blob', sha: vacio.sha });
+  setBusyText('Guardando el sitio…');
+  var ref = null;
+  for (var k = 0; k < 6 && !ref; k++) { try { ref = await ghApi(R + '/git/ref/heads/' + B); } catch (e) { if (k === 5) throw e; await new Promise(function (r) { setTimeout(r, 1500); }); } }
+  var pc = await ghApi(R + '/git/commits/' + ref.object.sha), tr = await ghApi(R + '/git/trees', 'POST', { base_tree: pc.tree.sha, tree: ents });
+  var cm = await ghApi(R + '/git/commits', 'POST', { message: 'Sitio de ' + st.nombre, tree: tr.sha, parents: [ref.object.sha] });
+  await ghApi(R + '/git/refs/heads/' + B, 'PATCH', { sha: cm.sha, force: false });
+  setBusyText('Activando el sitio (GitHub Pages)…');
+  try { await ghApi(R + '/pages', 'POST', { source: { branch: B, path: '/' } }); }
+  catch (e) { if (e.status !== 409 && e.status !== 422) throw new Error('El repositorio quedó creado pero no pude activar GitHub Pages (' + e.message + '). Actívalo en GitHub: Settings → Pages → rama ' + B + '.'); }
+  for (var q = 0; q < 15; q++) {
+    try { var bl = await ghApi(R + '/pages/builds/latest'); if (bl && bl.status === 'built') break; if (bl && bl.status === 'errored') break; } catch (e) { }
+    setBusyText('Desplegando el sitio… ' + (q + 1) + '/15'); await new Promise(function (r) { setTimeout(r, 4000); });
+  }
+  st.sitioPend = false; save(true);
+  return 'https://' + dueno + '.github.io/' + nombre + '/';
+};
 function u8(s) { return btoa(unescape(encodeURIComponent(s))); }
 function d8(b) { return decodeURIComponent(escape(atob(b.replace(/\s/g, '')))); }
 async function leer() {
@@ -4183,7 +4612,8 @@ async function arbolRepo(B) {
 }
 publicar = async function (st, o) {
   o = o || {}; var bad = puedePublicar(st); if (bad) throw new Error(bad);
-  var B = G().branch || 'main'; if ((APP.cfg.srv || {}).url) { try { setBusyText('Leyendo stock y ventas del servidor…'); await srvSync(6000); } catch (e) { } } setBusyText('Leyendo el sitio…'); var base = await leer();
+  if (st.sitioPend) { await window.crearSitioTienda(st); }
+  var B = G().branch || 'main'; if ((APP.cfg.srv || {}).url) { try { setBusyText('Leyendo stock y ventas del servidor…'); await srvSync(6000); } catch (e) { try { toast('No se pudo leer el servidor de pedidos: se publica con el stock y precios que ya tiene el panel', 'bad', 5000); } catch (e9) { } } } setBusyText('Leyendo el sitio…'); var base = await leer();
   var old = st.ghFotos || {}, repoSet = null;
   try { setBusyText('Revisando las fotos del sitio…'); repoSet = await arbolRepo(B); } catch (eT) { repoSet = null; }
   if (repoSet) { old = Object.assign({}, old); Object.keys(old).forEach(function (k) { if (!repoSet.has(old[k])) delete old[k]; }); }
@@ -4217,7 +4647,7 @@ publicar = async function (st, o) {
       var o0 = op[p.id] || {}, cur = monedaDe(st, p), stk = stockDe(p), ph = p.fotos.slice(0, 5).map(P).filter(Boolean);
       var cv = function (v) { var r = convertir(v, cur, 'CUP', T); if (r == null) throw new Error('Falta la tasa de ' + cur + ' (menú → Tasas).'); return redondear(r, 'CUP'); };
       var pv = precioVigente({ p: p.precio, of: N(p.ofertaPrecio) > 0 ? { p: p.ofertaPrecio, h: p.ofertaFin } : null }, hoy);
-      var fotoWeb = p.fotoWeb || o0.foto || '';
+      var fotoWeb = p.sinFoto ? '' : (p.fotoWeb || o0.foto || '');
       if (fotoWeb && !/^https?:\/\//i.test(fotoWeb) && !F[Object.keys(F).filter(function (k) { return F[k] === fotoWeb; })[0]]) {
         /* conservar ruta relativa ya en el repo */
       } else if (!ph.length && fotoWeb && /^https?:\/\//i.test(fotoWeb)) {
@@ -4234,12 +4664,12 @@ publicar = async function (st, o) {
     await commitar([{ path: 'datos/catalogo.json', mode: '100644', type: 'blob', sha: bj.sha }].concat(extra || []), msg || 'Actualización desde el panel');
   }
   var pend = ids.slice(), totalF = pend.length, vistas = 0, subidas = 0, nT = 0, nTot = Math.max(1, Math.ceil(totalF / TANDA_FOTOS));
-  var errorParcial = null;
+  var errorParcial = null, ilegibles = [];
   while (pend.length) {
     var lote = [], bytes = 0;
     while (pend.length && lote.length < TANDA_FOTOS && bytes < TANDA_BYTES) {
-      var fid = pend.shift(), rec = await fotoGet(fid); if (!rec) { vistas++; continue; }
-      lote.push({ id: fid, rec: rec }); bytes += (rec.g && rec.g.size) || 0;
+      var fid = pend.shift(), rec = await fotoGet(fid); if (!rec || !(rec.g || rec.t)) { vistas++; ilegibles.push(fid); continue; }
+      lote.push({ id: fid, rec: rec }); bytes += ((rec.g || rec.t).size) || 0;
     }
     if (!lote.length) continue;
     nT++; var es = [], nuevosLote = {};
@@ -4247,7 +4677,7 @@ publicar = async function (st, o) {
       for (var i = 0; i < lote.length; i++) {
         setBusyText('Subiendo fotos · tanda ' + nT + '/' + nTot + ' · ' + (vistas + 1) + ' de ' + totalF);
         var it = lote[i], path = ((it.id === st.logo || it.id === st.portada || it.id === st.espec) ? 'img/marca/' : 'img/productos/') + it.id + '.webp';
-        var bl = await gh('/git/blobs', 'POST', { content: (await blobAURI(it.rec.g)).split(',')[1], encoding: 'base64' });
+        var bl = await gh('/git/blobs', 'POST', { content: (await blobAURI(await fotoParaPublicar(it.rec.g || it.rec.t))).split(',')[1], encoding: 'base64' });
         es.push({ path: path, mode: '100644', type: 'blob', sha: bl.sha }); nuevosLote[it.id] = path; vistas++;
       }
       setBusyText('Guardando la tanda ' + nT + '/' + nTot + ' en GitHub…');
@@ -4279,9 +4709,43 @@ publicar = async function (st, o) {
   }
   await publicarJSON('Actualización desde el panel' + (borrar.length ? ' · limpieza de ' + borrar.length + ' fotos viejas' : ''), borrar.map(function (pth) { return { path: pth, mode: '100644', type: 'blob', sha: null }; }));
   if (borrar.length) { Object.keys(F).forEach(function (k) { if (borrar.indexOf(F[k]) >= 0) delete F[k]; }); try { toast(borrar.length + ' fotos viejas eliminadas del sitio'); } catch (eT2) { } }
-  st.ghFotos = F; st.slugOK = true; st.pubAt = Date.now(); st.dirty = false; save(true);
+  st.ghFotos = F; st.slugOK = true; st.pubAt = Date.now(); st.dirty = !!ilegibles.length; save(true);
+  if (ilegibles.length) { var nombres = st.prods.filter(function (p) { return p.fotos.some(function (f) { return ilegibles.indexOf(f) >= 0; }); }).map(function (p) { return p.nombre; }); throw new Error('No se pudieron leer ' + ilegibles.length + ' foto(s) del teléfono, por eso no se subieron' + (nombres.length ? ' (' + nombres.slice(0, 4).join(', ') + (nombres.length > 4 ? '…' : '') + ')' : '') + '. Vuelve a ponerlas en el producto y publica otra vez. Lo demás sí se publicó.'); }
   return { cambios: subidas + 1, borradas: borrar.length, v: st.pubAt };
 };
+/* Descarga una foto del repositorio del sitio (ruta relativa) */
+async function bajarFotoSitio(path) {
+  var g = G(), r = await fetchT('https://api.github.com/repos/' + g.owner + '/' + g.repo + '/contents/' + path.split('/').map(encodeURIComponent).join('/') + '?ref=' + encodeURIComponent(g.branch || 'main'), { cache: 'no-store', headers: { Authorization: 'Bearer ' + g.token, Accept: 'application/vnd.github.raw' } }, 60000);
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  var u8 = new Uint8Array(await r.arrayBuffer()); return new Blob([u8], { type: tipoImg(u8) });
+}
+async function traerFotosSitio(st, b) {
+  var g = G(), res = { n: 0, fallo: 0, prods: 0 }; if (!g.token) return res;
+  st.ghFotos = st.ghFotos || {};
+  var calPrev = APP.cfg.calidad; APP.cfg.calidad = 'original';
+  var rel = function (u) { return u && !/^(https?:|data:)/i.test(u) ? String(u).replace(/^\.?\//, '') : ''; };
+  var cola = [];
+  var byId = {}; (b.productos || []).forEach(function (x) { byId[x.id] = x; });
+  st.prods.forEach(function (p) { var x = byId[p.id]; if (!x || p.fotos.length) return; var l = (x.fotos && x.fotos.length ? x.fotos : (x.foto ? [x.foto] : [])).map(rel).filter(Boolean).slice(0, 5); if (l.length) cola.push({ t: 'p', p: p, l: l }); });
+  var m = b.marca || {};
+  if (!st.logo && rel(m.logo)) cola.push({ t: 'logo', l: [rel(m.logo)] });
+  if (!st.portada && rel(((b.portada || {}).fotos || [])[0])) cola.push({ t: 'portada', l: [rel(b.portada.fotos[0])] });
+  if (!st.espec && rel((b.especialidades || {}).foto)) cola.push({ t: 'espec', l: [rel(b.especialidades.foto)] });
+  var i = 0, hechos = 0;
+  async function obrero() {
+    while (i < cola.length) {
+      var it = cola[i++], ids = [];
+      for (var k = 0; k < it.l.length; k++) {
+        try { var bl = await bajarFotoSitio(it.l[k]), fid = await guardarFoto(bl); st.ghFotos[fid] = it.l[k]; ids.push(fid); res.n++; } catch (e) { res.fallo++; }
+      }
+      if (ids.length) { if (it.t === 'p') { it.p.fotos = ids; it.p.u = Date.now(); res.prods++; } else st[it.t] = ids[0]; }
+      hechos++; setBusyText('Bajando fotos del sitio… ' + hechos + '/' + cola.length);
+    }
+  }
+  try { await Promise.all([obrero(), obrero(), obrero()]); } finally { APP.cfg.calidad = calPrev; }
+  if (res.n) save(true);
+  return res;
+}
 async function importar() {
   var b = await leer(); if (!b.productos) throw new Error('No encontré datos/catalogo.json en el repositorio.');
   var st = ST(); if (!st) { st = nuevaTienda((b.marca || {}).nombre, 'tototools'); APP.stores.push(st); APP.cur = st.id; }
@@ -4298,7 +4762,11 @@ async function importar() {
     return Object.assign(old[x.id] || nuevoProducto(st), { id: x.id, c: (old[x.id] || {}).c || 1, nombre: x.nombre, desc: txt(x.descripcion) || txt(x.resumen) || '', precio: x.precio, moneda: '', cat: x.categoria || '', vis: x.visible !== false, disp: !x.agotado, dest: !!x.destacado, nuevo: !!x.nuevo, ofertaPrecio: x.precioOferta || '', fotoWeb: x.foto || '' });
   });
   st.sitio = {}; SF.forEach(function (f) { var v = getPath(b, f[0]); if (v != null) st.sitio[f[0]] = v; }); st.sitio['aviso.activo'] = !!(b.aviso || {}).activo;
-  st.dirty = false; save(true); return st.prods.length;
+  st.dirty = false; save(true);
+  /* Fotos del sitio: se bajan al teléfono (sin recomprimir) para los productos que no tienen foto en el panel */
+  var rf = { n: 0, fallo: 0 };
+  try { rf = await traerFotosSitio(st, b); } catch (eF) { }
+  importar.fotos = rf; return st.prods.length;
 }
 var SF = [['portada.etiqueta', 'Portada: etiqueta'], ['portada.titulo', 'Portada: título'], ['portada.texto', 'Portada: texto'], ['portada.sello', 'Portada: sello'], ['tienda.titulo', 'Catálogo: título'], ['tienda.texto', 'Catálogo: texto'], ['condiciones.pedido', 'Condiciones del pedido'], ['condiciones.entrega', 'Condiciones de entrega'], ['contacto.correo', 'Correo'], ['contacto.telefono2', 'Segundo teléfono'], ['aviso.texto', 'Aviso en la web: texto']];
 /* ---- Enlace con el servidor de pedidos (stock y ventas) ---- */
@@ -4314,22 +4782,29 @@ async function srvEstado(ms) {
 async function srvSync(ms) {
   var j = await srvEstado(ms), st = ST(); if (!st) throw new Error('Primero trae o crea la tienda.');
   var bySku = {}, byNom = {}; st.prods.forEach(function (p) { if (p.sku) bySku[nz(p.sku)] = p; byNom[nz(p.nombre)] = p; });
-  var n = 0, sin = 0, ahora = Date.now(), primera = !st.srvT, lote = [];
+  var n = 0, sin = 0, ahora = Date.now(), primera = !st.srvT, lote = [], vistos = {}, cambioPrecio = 0, sinReg = 0;
   j.items.forEach(function (it) {
     var p = bySku[nz(it.sku)] || byNom[nz(it.nombre)]; if (!p) { sin++; return; }
     var antes = stockDe(p);
     if (it.stock != null) p.st = Math.max(0, Math.round(it.stock));
+    else if (p.st !== '' && p.st != null && num(p.st) > 0) { p.st = 0; sinReg++; } /* el sistema ya no tiene registro de existencias de un producto que tenía: se agotó */
     var desp = stockDe(p);
     /* llegó o volvió a tener cantidad: estaba en 0, o no tenía existencias registradas (salvo la primera lectura) */
     if (desp !== null && desp > 0 && (antes !== null ? antes <= 0 : !primera)) lote.push(p);
-    p.vend = +it.vendido || 0; n++;
+    p.vend = +it.vendido || 0; n++; vistos[nz(it.sku)] = 1; if (p.sku) vistos[nz(p.sku)] = 1;
+    /* precio: si cambió en el sistema, el catálogo lo toma (solo productos en la moneda base) */
+    var np = Number(it.precio);
+    if (isFinite(np) && np > 0 && monedaDe(st, p) === st.mp && Math.abs(num(p.precio) - np) > 0.004) { p.precio = np; if (num(p.ofertaPrecio) >= np) { p.ofertaPrecio = ''; } cambioPrecio++; p.u = ahora; }
   });
+  /* un producto con control de existencias que el sistema ya no lista (se agotó y salió de su lista) pasa a agotado */
+  var ausentes = 0;
+  if (j.items.length) st.prods.forEach(function (p) { if (p.sku && !vistos[nz(p.sku)] && p.st !== '' && p.st != null && num(p.st) > 0) { p.st = 0; ausentes++; } });
   if (lote.length) { st.srvLote = ahora; lote.forEach(function (p) { p.llego = ahora; }); }
   st.srvT = ahora;
-  st.dirty = true; save(true); return { n: n, sin: sin, ventas: j.ventas, llegaron: lote.length };
+  st.dirty = true; save(true); return { n: n, sin: sin, ventas: j.ventas, llegaron: lote.length, precios: cambioPrecio, agotados: ausentes + sinReg };
 }
 ACT['srv-test'] = async function () { var done = busy('Probando…'); try { var j = await srvEstado(); done(); toast('Conectado: ' + j.cantidad + ' productos' + (j.ventas ? ' con ventas ✓' : ' (sin ventas: AxisPOS no activo)'), '', 4500); } catch (e) { done(); toast(e.message, 'bad', 5000); } };
-ACT['srv-sync'] = async function () { var done = busy('Leyendo stock y ventas…'); try { var r = await srvSync(); done(); toast(r.n + ' productos actualizados' + (r.llegaron ? ' · ' + r.llegaron + ' llegaron o volvieron a tener cantidad' : '') + (r.sin ? ' · ' + r.sin + ' del servidor no están en el panel' : ''), '', 4500); refresh(); } catch (e) { done(); toast(e.message, 'bad', 5000); } };
+ACT['srv-sync'] = async function () { var done = busy('Leyendo stock y ventas…'); try { var r = await srvSync(); done(); toast(r.n + ' productos actualizados' + (r.llegaron ? ' · ' + r.llegaron + ' llegaron o volvieron a tener cantidad' : '') + (r.precios ? ' · ' + r.precios + ' con precio nuevo' : '') + (r.agotados ? ' · ' + r.agotados + ' se agotaron (ya no están en el sistema)' : '') + (r.sin ? ' · ' + r.sin + ' del servidor no están en el panel' : ''), '', 5500); refresh(); } catch (e) { done(); toast(e.message, 'bad', 5000); } };
 ROUTES.unshift([/^\/conexion$/, function () {
   var c = APP.cfg, sv = c.srv || (c.srv = { url: '', dias: 30 }), g = G(), st = ST(), S = (st && st.sitio) || {}; bindTo(c, false, function (f) { save(); syncAuth(); if (f === 'ai.prov') refresh(); });
   var body = html`<div class="pg stack"><div class="card"><h2>GitHub (tu sitio)</h2><p class="help" style="margin:0 0 6px">El panel publica directo en el repositorio de tu web. No usa Firebase ni imgbb. Usa un token «fine-grained» solo de ese repositorio con permiso <b>Contents: Read and write</b>.</p>
@@ -4350,6 +4825,10 @@ ROUTES.unshift([/^\/conexion$/, function () {
       <label class="lbl">Contraseña</label><input class="in" type="password" data-f="fb.pass" value="${(c.fb || {}).pass || ''}" autocapitalize="none">
       <div class="wr" style="margin-top:10px"><button class="btn pri sm" data-act="fb-test">Probar y traer</button><button class="btn sm" data-act="fb-reglas">Copiar reglas</button></div>
       <p class="help" style="margin:8px 0 0">Pega las reglas en Realtime Database → Reglas → Publicar. Después publica el catálogo para que la web empiece a enviar pedidos y visitas.</p></div>
+    <div class="card"><h2>Fotos</h2><label class="lbl">Calidad de las fotos</label><select class="in" data-f="calidad"><option value="minima" ${c.calidad === 'minima' ? raw('selected') : ''}>Mínima (muy livianas, 540 px)</option><option value="ahorro" ${c.calidad === 'ahorro' ? raw('selected') : ''}>Ahorro de datos (más livianas)</option><option value="media" ${c.calidad === 'media' ? raw('selected') : ''}>Media (recomendada)</option><option value="alta" ${c.calidad === 'alta' ? raw('selected') : ''}>Alta (más pesadas)</option><option value="maxima" ${c.calidad === 'maxima' ? raw('selected') : ''}>Máxima (fotos grandes y nítidas)</option><option value="extrema" ${c.calidad === 'extrema' ? raw('selected') : ''}>Extrema (hasta 3000 px, casi sin pérdida)</option><option value="original" ${c.calidad === 'original' ? raw('selected') : ''}>Original (sin recomprimir, como vienen)</option></select><p class="help" style="margin:6px 0 0">Vale para las fotos que guardes de ahora en adelante (también al importar la copia de «Catálogo de productos»); las ya guardadas no cambian. «Original» conserva cada foto exactamente como viene: la mejor calidad, pero pesa más.</p>
+      <label class="lbl" style="margin-top:12px">Calidad al subir al sitio (publicar)</label><select class="in" data-f="calPub">${Object.keys(PUBNM).map(function (k) { return html`<option value="${k}" ${(c.calPub || 'guardada') === k ? raw('selected') : ''}>${PUBNM[k]}</option>`; })}</select>
+      <div class="wr" style="margin-top:8px"><button class="btn sm" data-act="cal-prev">${ic('image', 16)}Vista previa</button></div>
+      <p class="help" style="margin:6px 0 0">Solo cambia lo que se sube a GitHub; tus fotos en el teléfono no se tocan. Se aplica a las fotos que subas de ahora en adelante; para cambiar las ya publicadas usa «Volver a publicar todo».</p></div>
     <div class="card"><h2>IA gratis (descripciones y fotos)</h2><p class="help" style="margin:0 0 6px">El botón «Generar» del producto escribe la descripción. Si el producto tiene foto, la IA la mira; si aún no tiene nombre, también lo propone.</p>
       <label class="lbl">Servicio</label><select class="in" data-f="ai.prov"><option value="pollinations" ${c.ai.prov === 'pollinations' ? raw('selected') : ''}>Gratis, sin clave (Pollinations)</option><option value="gemini" ${c.ai.prov === 'gemini' ? raw('selected') : ''}>Google Gemini (clave gratis)</option><option value="anthropic" ${c.ai.prov === 'anthropic' ? raw('selected') : ''}>Anthropic Claude (de pago)</option><option value="" ${!c.ai.prov ? raw('selected') : ''}>Ninguno (plantillas locales)</option></select>
       ${c.ai.prov === 'gemini' || c.ai.prov === 'anthropic' ? html`<label class="lbl">Clave de API</label><input class="in" data-f="ai.key" value="${c.ai.key}" autocapitalize="none" placeholder="${c.ai.prov === 'gemini' ? 'Gratis en aistudio.google.com/apikey' : 'sk-ant-…'}"><label class="lbl">Modelo (opcional)</label><input class="in" data-f="ai.model" value="${c.ai.model}" placeholder="${c.ai.prov === 'anthropic' ? 'claude-haiku-5-5' : 'gemini-flash-latest'}" autocapitalize="none">` : ''}
@@ -4361,7 +4840,7 @@ ROUTES.unshift([/^\/conexion$/, function () {
 }]);
 document.addEventListener('change', function (e) { var k = e.target.getAttribute && e.target.getAttribute('data-ghs'); if (!k) return; var st = ST(); st.sitio = st.sitio || {}; st.sitio[k] = e.target.type === 'checkbox' ? e.target.checked : e.target.value; touch(st); });
 ACT['gh-test'] = async function () { var done = busy('Probando…'); try { var r = await gh(''), ro = r.permissions && !r.permissions.push; done(); toast(ro ? 'Conectado, pero SIN permiso de escritura' : 'Conectado a ' + r.full_name + ' ✓', ro ? 'bad' : '', 4000); } catch (e) { done(); toast(e.message, 'bad', 5000); } };
-ACT['gh-import'] = async function () { if (!confirm('Se reemplazarán los datos de la tienda en el panel por los del sitio. ¿Continuar?')) return; var done = busy('Leyendo el sitio…'); try { var n = await importar(); done(); toast(n + ' productos traídos ✓'); refresh(); } catch (e) { done(); toast(e.message, 'bad', 5000); } };
+ACT['gh-import'] = async function () { if (!confirm('Se reemplazarán los datos de la tienda en el panel por los del sitio. ¿Continuar?')) return; var done = busy('Leyendo el sitio…'); try { var n = await importar(), rf = importar.fotos || {}; done(); toast(n + ' productos traídos' + (rf.n ? ' · ' + rf.n + ' fotos bajadas del sitio (' + rf.prods + ' productos)' : '') + (rf.fallo ? ' · ' + rf.fallo + ' fotos no se pudieron bajar' : '') + ' ✓', '', 5500); refresh(); } catch (e) { done(); toast(e.message, 'bad', 5000); } };
 })();
 </script>
 <script>
@@ -4413,8 +4892,9 @@ async function crearBackupNativo(conFotos, nivel) {
   var ids = conFotos ? idsBackup() : [];
   setBusyText(conFotos ? ('Empaquetando ' + ids.length + ' foto(s) en nativo…') : 'Preparando copia nativa…');
   var st = ST();
-  var nom = 'catalogo-copia-' + ((st && st.slug) || 'tienda') + '-' + new Date().toISOString().slice(0, 10) +
-    (conFotos ? (nivel === 'completa' ? '' : '-miniaturas') : '-sin-fotos') + '.zip';
+  var nom = 'catalogo-copia-' + ((st && st.slug) || 'tienda') + '-' + new Date().toISOString().slice(0, 10) + sufijoCalidadBk(nivel, conFotos) + '.zip';
+  /* El plugin nativo solo distingue completa vs mini; media/alta se hacen por JS */
+  if (nivel === 'media' || nivel === 'alta') throw new Error('media-via-js');
   var r = await P.crear({
     datosJson: datosJson,
     fotoIds: ids,
@@ -4457,14 +4937,17 @@ ACT['bk-crear'] = async function (el) {
           refresh();
           return;
         } catch (ne) {
-          console.warn('[backup nativo]', ne);
-          toast('Nativo falló (' + ((ne && ne.message) || ne) + '). Probando modo web…', 'bad', 3500);
+          var msgN = (ne && ne.message) || String(ne);
+          if (msgN !== 'media-via-js') {
+            console.warn('[backup nativo]', ne);
+            toast('Nativo falló (' + msgN + '). Probando modo web…', 'bad', 3500);
+          }
           /* sigue al flujo JS de abajo */
         }
       }
       done = busy(conFotos ? 'Preparando la copia con fotos…' : 'Preparando la copia…');
       /* Un solo ZIP: el navegador bloquea descargas repetidas si se parten en varios archivos */
-      var base = 'catalogo-copia-' + ((st && st.slug) || 'tienda') + '-' + new Date().toISOString().slice(0, 10) + (conFotos ? (nivel === 'completa' ? '' : '-miniaturas') : '-sin-fotos'), r = '';
+      var base = 'catalogo-copia-' + ((st && st.slug) || 'tienda') + '-' + new Date().toISOString().slice(0, 10) + sufijoCalidadBk(nivel, conFotos), r = '';
       var totalFotos = 0, ultimoMb = 0;
       var blob = await crearBackup(conFotos, nivel, null), nom = base + '.zip';
       totalFotos += (blob._fotosOk || 0);
@@ -4493,12 +4976,7 @@ ACT['bk-crear'] = async function (el) {
       toast(msg, 'bad', 6500);
     }
   };
-  ACT['bk-restaurar'] = async function () {
-    var f = await elegirArchivo('.zip,application/zip,application/octet-stream'); if (!f) return;
-    if (!(await confirmar('¿Restaurar esta copia?', 'Restaurar', false, 'Las tiendas de la copia reemplazan a las que tengan el mismo identificador.'))) return;
-    await snapGuardar(true); var done = busy('Restaurando…');
-    try { var r = await restaurarBackup(f); done(); toast('Restauradas ' + r.tiendas + ' tienda(s) y ' + r.fotos + ' foto(s) ✓'); go('/'); } catch (e) { done(); toast(e.message || 'No se pudo restaurar', 'bad', 5000); }
-  };
+  ACT['bk-restaurar'] = function () { return flujoRestaurar(); };
   ROUTES.unshift([/^\/respaldo$/, function () {
     var st = ST(), n = st ? st.prods.length : 0, ult = APP.cfg.lastBackup || 0, viejo = !ult || Date.now() - ult > 7 * 864e5;
     var body = html`<div class="pg stack">
@@ -4506,7 +4984,7 @@ ACT['bk-crear'] = async function (el) {
         <p class="help" style="margin:0 0 8px">Tus datos viven solo en este teléfono. Si cambias de teléfono, desinstalas la app o borras los datos, se pierden. Guarda una copia fuera de aquí (Telegram, Drive, WhatsApp o la PC).</p>
         <p style="margin:0 0 10px"><span class="chip ${viejo ? 'bad' : 'ok'}">Última copia: ${fecha(ult)}</span> <span class="help">· ${n} productos</span></p>
         <div class="wr"><button class="btn pri sm" data-act="bk-crear" data-v="1">Copia con fotos</button><button class="btn sm" data-act="bk-crear" data-v="0">Copia sin fotos</button></div>
-        <p class="help" style="margin:8px 0 0">Con fotos incluye miniaturas de los productos usados (para no cerrar la app). Sin fotos es más rápida. Las fotos a tamaño completo ya publicadas siguen en GitHub. La copia no incluye claves ni el token.</p></div>
+        <p class="help" style="margin:8px 0 0">Con fotos eliges Original, Alta (~1600 px), Media (~1000 px) o Miniaturas. Sin fotos es más rápida. Al restaurar también puedes bajar la calidad. Las fotos a tamaño completo ya publicadas siguen en GitHub. La copia no incluye claves ni el token.</p></div>
       <div class="card"><h2>Restaurar una copia</h2><p class="help" style="margin:0 0 8px">Elige un archivo .zip creado con este panel. Se actualizan las tiendas que coinciden y se agregan las demás.</p><button class="btn sm" data-act="bk-restaurar">Elegir copia…</button></div>
       <div class="card"><h2>Copias automáticas del teléfono</h2><p class="help" style="margin:0 0 6px">El panel guarda solo las últimas 3 (una cada 6 horas). Sirven si algo se daña, pero no si cambias de teléfono: para eso haz la copia de arriba.</p><div id="bk-lista"></div></div></div>`;
     return { title: 'Copia de seguridad', back: '/menu', nav: 'menu', body: body, after: pintarSnaps };
@@ -4554,11 +5032,22 @@ ACT['bk-crear'] = async function (el) {
     var v = st.vis || {}, lim = new Date(Date.now() - (dias - 1) * 864e5), d = lim.getFullYear() + '-' + String(lim.getMonth() + 1).padStart(2, '0') + '-' + String(lim.getDate()).padStart(2, '0'), t = 0;
     Object.keys(v).forEach(function (k) { if (k >= d) t += num(v[k]); }); return t;
   };
+  /* Un pedido que no llegó a Firebase se puede registrar copiando el mensaje de WhatsApp: se revisa también el portapapeles */
+  async function delPortapapeles() {
+    var st = ST(), n = 0;
+    try {
+      var CP = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Clipboard, tx = '';
+      if (CP) { var rr = await CP.read(); tx = (rr && rr.value) || ''; } else if (navigator.clipboard && navigator.clipboard.readText) tx = await navigator.clipboard.readText();
+      leerPedidosWA(st, tx).forEach(function (o) { if (!st.pedidos.some(function (x) { return x.c === o.c; })) { st.pedidos.push(o); n++; } });
+      if (n) { st.pedidos.sort(function (a, b) { return a.c < b.c ? 1 : -1; }); save(true); }
+    } catch (e) { }
+    return n;
+  }
   var orig = ACT['ped-sync'];
   ACT['ped-sync'] = async function () {
     if (listo()) {
       var done = busy('Buscando pedidos…');
-      try { var r = await sync(); done(); toast(r.n ? r.n + (r.n === 1 ? ' pedido nuevo' : ' pedidos nuevos') : 'No hay pedidos nuevos'); refresh(); return; }
+      try { var r = await sync(), ex = await delPortapapeles(), tn = r.n + ex; done(); toast(tn ? tn + (tn === 1 ? ' pedido nuevo' : ' pedidos nuevos') + (ex ? ' (' + ex + ' del mensaje copiado)' : '') : 'No hay pedidos nuevos'); refresh(); return; }
       catch (e) { done(); toast(e.message, 'bad', 5000); }
     }
     return orig.apply(this, arguments);
@@ -4589,7 +5078,7 @@ ACT['bk-crear'] = async function (el) {
     var em = (cfg().email || 'TU_CORREO').replace(/'/g, ''), ok = "auth != null && auth.token.email === '" + em + "'";
     var r = { rules: { '.read': false, '.write': false,
       visitas: { $slug: { '.read': ok, $dia: { '.write': true, '.validate': "newData.isNumber() && newData.val() === (data.exists() ? data.val() : 0) + 1" } } },
-      pedidos: { $slug: { '.read': ok, $cod: { '.write': '!data.exists() && newData.exists()', '.validate': "newData.hasChildren(['t','txt']) && newData.child('t').isNumber() && newData.child('txt').isString() && newData.child('txt').val().length < 6000" } } } } };
+      pedidos: { $slug: { '.read': ok, $cod: { '.write': '!data.exists() && newData.exists()', '.validate': "newData.hasChildren(['t','txt']) && newData.child('t').isNumber() && newData.child('txt').isString() && newData.child('txt').val().length < 20000" } } } } };
     copiar(JSON.stringify(r, null, 2));
   };
   document.addEventListener('change', function (e) { var f = e.target.getAttribute && e.target.getAttribute('data-f'); if (f && f.indexOf('fb.') === 0) { TK = null; touch(); } });
