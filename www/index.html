@@ -4223,12 +4223,16 @@ function pedirCalidadBackup() {
 }
 /* Abre la copia y cuenta lo que trae (tiendas, fotos y el tamaño de las fotos) */
 async function abrirBackup(file) {
-  var Z = await jszip(), zip = await Z.loadAsync(await file.arrayBuffer()), f = zip.file('datos.json'); if (!f) throw new Error('Este archivo no es una copia del Catálogo de Productos.');
+  var mb = Math.round(file.size / 1048576);
+  if (mb > 300 && window.Capacitor && Capacitor.isNativePlatform && Capacitor.isNativePlatform()) throw new Error('Esta copia pesa ' + mb + ' MB: con ese tamaño solo la puede leer el módulo nativo de la app, y esta instalación no lo tiene activo. Instala la versión que lo incluye (en GitHub Actions, el paso «Inyectar plugin Nativo» debe salir en verde).');
+  var Z = await jszip(), zip = await Z.loadAsync(await file.arrayBuffer()), pre = '', f = zip.file('datos.json');
+  if (!f) { var cand = zip.file(/(^|\/)datos\.json$/); if (cand.length) { f = cand[0]; pre = f.name.slice(0, f.name.length - 'datos.json'.length); } }
+  if (!f) { var nom = []; zip.forEach(function (p0) { if (nom.length < 6) nom.push(p0); }); throw new Error('Este archivo no es una copia del Catálogo de Productos (falta datos.json, ' + mb + ' MB).' + (nom.length ? ' Contiene: ' + nom.join(', ') + (nom.length >= 6 ? '…' : '') : ' No se pudo leer ninguna entrada: puede estar incompleto.')); }
   var j = JSON.parse(await f.async('string')); if ((j.app !== 'catalogo' && j.app !== LEGADO) || !j.data) throw new Error('Copia no válida.');
-  var ids = {}; zip.forEach(function (p) { var m = /^fotos\/(.+)-([gt])\.bin$/.exec(p); if (m) ids[m[1]] = 1; });
+  var ids = {}; zip.forEach(function (p) { if (p.indexOf(pre) !== 0) return; var m = /^fotos\/(.+)-([gt])\.bin$/.exec(p.slice(pre.length)); if (m) ids[m[1]] = 1; });
   var lado = 0;
-  try { var k0 = Object.keys(ids)[0]; if (k0) { var e0 = zip.file('fotos/' + k0 + '-g.bin') || zip.file('fotos/' + k0 + '-t.bin'), im0 = await decodeImg(new Blob([await e0.async('arraybuffer')])); lado = Math.max(im0.width, im0.height); if (im0.close) im0.close(); } } catch (e) { }
-  return { zip: zip, j: j, ids: Object.keys(ids), lado: lado };
+  try { var k0 = Object.keys(ids)[0]; if (k0) { var e0 = zip.file(pre + 'fotos/' + k0 + '-g.bin') || zip.file(pre + 'fotos/' + k0 + '-t.bin'), im0 = await decodeImg(new Blob([await e0.async('arraybuffer')])); lado = Math.max(im0.width, im0.height); if (im0.close) im0.close(); } } catch (e) { }
+  return { zip: zip, j: j, ids: Object.keys(ids), lado: lado, pre: pre };
 }
 /* Pregunta qué restaurar de la copia (ab = lo que trae la copia; null si aún no se ha abierto) */
 function pedirModoRestaurar(ab) {
@@ -4247,7 +4251,7 @@ async function restaurarBackup(file, modo, ab) {
   var zip = ab.zip, j = ab.j, n = 0, mantenidas = 0, tot = ab.ids.length;
   if (modo !== 'datos') {
     for (var k = 0; k < tot; k++) {
-      var id = ab.ids[k], g = zip.file('fotos/' + id + '-g.bin'), t = zip.file('fotos/' + id + '-t.bin');
+      var id = ab.ids[k], g = zip.file((ab.pre || '') + 'fotos/' + id + '-g.bin'), t = zip.file((ab.pre || '') + 'fotos/' + id + '-t.bin');
       var gb = g ? new Blob([await g.async('arraybuffer')], { type: 'image/webp' }) : null, tb = t ? new Blob([await t.async('arraybuffer')], { type: 'image/webp' }) : gb;
       var ex = null; try { ex = await fotoGet(id); } catch (e0) { ex = null; }
       /* nunca bajar la calidad: si el teléfono ya tiene una versión más pesada (más detalle), se conserva */
@@ -4285,7 +4289,7 @@ async function flujoRestaurar() {
     try {
       var rn = await NAT.p.elegirZip({ modo: mN, conservarMejor: true });
       if (rn && rn.cancelado) { d0(); return; }
-      if (!rn || rn.invalido || !rn.datos) throw new Error('Este archivo no es una copia del Catálogo de Productos.' + (rn && rn.entradas && rn.entradas.length ? ' Contiene: ' + rn.entradas.join(', ') + (rn.entradas.length >= 6 ? '…' : '') : ''));
+      if (!rn || rn.invalido || !rn.datos) throw new Error('Este archivo no es una copia del Catálogo de Productos.' + (rn && rn.entradas && rn.entradas.length ? ' Falta datos.json. Contiene: ' + rn.entradas.join(', ') + (rn.entradas.length >= 6 ? '…' : '') : ' No se pudo leer ninguna entrada del archivo: puede estar incompleto o dañado (¿terminó de copiarse al teléfono?).'));
       setBusyText('Restaurando…'); MEMF = {}; PURL = {};
       var r0 = aplicarCopia(JSON.parse(rn.datos), rn.fotos || 0, mN, rn.mantenidas || 0); d0();
       toast(msgRestaurado(r0), 'ok', 5000); go('/'); return;
