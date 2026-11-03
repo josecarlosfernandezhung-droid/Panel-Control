@@ -225,9 +225,6 @@ function hmTxt(s) { var m = hm(s); if (m == null) return ''; var h = Math.floor(
 function horarioBase() { var a = []; for (var i = 0; i < 7; i++) a.push({ c: i === 0, a: '09:00', z: '18:00' }); return a; }
 
 /* Clave de comparación de un SKU/código: sin acentos ni espacios y, si es solo número, sin ceros a la izquierda (Excel los quita) */
-/* Disponible = publicado, con nombre, marcado disponible y con existencias (si se controlan). Es la misma regla en Productos, Compartir y la web. */
-function esDisp(p) { if (!p || !p.nombre || p.vis === false || p.disp === false) return false; var s = stockDe(p); return !(s !== null && s <= 0); }
-
 function skuKey(s) {
   var b = norm(String(s == null ? '' : s)).replace(/\s+/g, '');
   return /^\d+$/.test(b) ? String(parseInt(b, 10)) : b;
@@ -2015,7 +2012,7 @@ function hydrate(root) {
   if (!('IntersectionObserver' in window)) { imgs.forEach(load); return; }
   if (!_phIO) _phIO = new IntersectionObserver(function (es) {
     es.forEach(function (e) { if (e.isIntersecting) { _phIO.unobserve(e.target); load(e.target); } });
-  }, { root: null, rootMargin: '160px', threshold: 0.01 });
+  }, { root: document.getElementById('view') || null, rootMargin: '120px', threshold: 0.01 });
   imgs.forEach(function (im) { _phIO.observe(im); });
 }
 function phImg(id, sz) { return id ? raw('<img data-ph="' + esc(id) + '" data-sz="' + (sz || 't') + '" alt="">') : raw(''); }
@@ -2623,7 +2620,7 @@ ACT.publicar = async function () {
   var st = ST(), bad = puedePublicar(st);
   if (bad) { toast(bad, 'bad', 4500); if (!hayNube() || !logged()) go('/conexion'); return; }
   var done = busy('Publicando…');
-  try { var r = await publicar(st); done(); var nd = st.prods.filter(esDisp).length, na = st.prods.filter(function (p) { return p.nombre && p.vis !== false && !esDisp(p); }).length; toast('Catálogo publicado ✓ · ' + nd + ' disponibles' + (na ? (st.ocAg ? ' (' + na + ' agotados ocultos)' : ' · ' + na + ' agotados marcados') : ''), '', 5000); refresh(); }
+  try { var r = await publicar(st); done(); toast('Catálogo publicado ✓'); refresh(); }
   catch (e) { done(); await aviso('No se pudo publicar', e.message + ' Tus cambios siguen guardados en el teléfono.'); }
 };
 
@@ -2639,7 +2636,7 @@ function listaProductos(st) {
     if (f.f === 'publicados' && p.vis === false) return false;
     if (f.f === 'ocultos' && p.vis !== false) return false;
     if (f.f === 'agotados' && !(!p.disp || (s !== null && s <= 0))) return false;
-    if (f.f === 'disponibles' && !esDisp(p)) return false;
+    if (f.f === 'disponibles' && (!p.disp || (s !== null && s <= 0))) return false;
     if (f.f === 'llegaron' && !esLlegado(st, p)) return false;
     if (f.f === 'llegaronsf' && !(esLlegado(st, p) && !p.fotos.length && !p.fotoWeb)) return false;
     if (f.f === 'destacados' && !p.dest) return false;
@@ -2697,7 +2694,7 @@ route(/^\/productos$/, function () {
   for (var _i = 0; _i < st.prods.length; _i++) {
     var _p = st.prods[_i], _s = stockDe(_p), _vis = _p.vis !== false, _lleg = esLlegado(st, _p);
     if (_vis) CN.publicados++; else CN.ocultos++;
-    if (esDisp(_p)) CN.disponibles++;
+    if (!(!_p.disp || (_s !== null && _s <= 0))) CN.disponibles++;
     if (_lleg) { CN.llegaron++; if (!_p.fotos.length && !_p.fotoWeb) CN.llegaronsf++; }
   }
   var chips = [['todos', 'Todos'], ['publicados', 'Publicados'], ['disponibles', 'Disponibles'], ['llegaron', 'Llegaron'], ['llegaronsf', 'Llegaron sin foto'], ['ocultos', 'Ocultos'], ['agotados', 'Agotados'], ['bajo', 'Poco stock'], ['destacados', 'Destacados'], ['oferta', 'Ofertas'], ['sinfoto', 'Sin foto']];
@@ -2770,7 +2767,7 @@ function bulkBuscarProductos(q) {
   for (var i = 0; i < list.length; i++) {
     var p = list[i];
     if (!p.nombre) continue;
-    if (APP.ui.bulkDisp && !esDisp(p)) continue;
+    if (APP.ui.bulkDisp) { var sdp = stockDe(p); if (!p.disp || (sdp !== null && sdp <= 0)) continue; }
     var pn = norm(p.nombre), sk = norm(p.sku || '');
     var score = 9999;
     if (pn === qn || sk === qn) score = 0;
@@ -3599,7 +3596,7 @@ async function anuncioTarjeta(st, p, estilo, fmt) {
 /* ---------------- pantalla Compartir ---------------- */
 route(/^\/compartir$/, function () {
   var st = ST(), url = catalogURL(st), fmt = APP.ui.adFmt || 'c', est = APP.ui.adEst || 'grid';
-  var nDisp = st.prods.filter(esDisp).length, conFoto = st.prods.filter(function (p) { return esDisp(p) && p.fotos && p.fotos.length; });
+  var conFoto = st.prods.filter(function (p) { var sk = stockDe(p); return p.vis !== false && p.nombre && p.disp !== false && !(sk !== null && sk <= 0) && p.fotos && p.fotos.length; });
   var adQ = (APP.ui.adQ || '').trim();
   var conFotoVista = adQ ? conFoto.filter(function (p) { return norm(p.nombre).indexOf(norm(adQ)) >= 0 || norm(p.sku || '').indexOf(norm(adQ)) >= 0; }) : conFoto;
   var adPrimera = APP.ui.adSel === undefined;
@@ -3610,7 +3607,7 @@ route(/^\/compartir$/, function () {
       ${st.pubAt ? '' : html`<div class="banner warn" style="margin-top:10px">Aún no has publicado el catálogo: el enlace funcionará cuando lo publiques.</div>`}
       <div class="wr" style="margin-top:10px"><button class="btn pri sm" data-act="sh-link">${ic('share', 16)}Compartir enlace</button><button class="btn sm" data-act="sh-copy">${ic('copy', 16)}Copiar</button><button class="btn wa sm" data-act="sh-wa">${ic('chat', 16)}WhatsApp</button><a class="btn sm" target="_blank" rel="noopener" href="${url}">Abrir</a></div>` : html`<div class="banner info">Para tener un enlace, indica dónde publicas tu catálogo en <a href="#/conexion">Cuenta y conexión</a> («Dirección pública del catálogo»). Mientras tanto puedes compartir el catálogo como archivo (más abajo).</div>`}</div>
     ${url ? html`<div class="card tc"><h2>Código QR</h2><div class="qrbox" id="qr-box"></div><div class="wr" style="justify-content:center;margin-top:10px"><button class="btn sm" data-act="qr-dl">${ic('download', 16)}Descargar QR</button></div></div>` : ''}
-    <div class="card"><h2>Imagen para estados de WhatsApp</h2><p class="help" style="margin:0 0 10px">Tus productos con foto y precio y el QR de tu catálogo, listos para publicar. ${nDisp} disponibles · ${conFoto.length} con foto (solo se pueden elegir los que tienen foto).</p>
+    <div class="card"><h2>Imagen para estados de WhatsApp</h2><p class="help" style="margin:0 0 10px">Tus productos con foto y precio y el QR de tu catálogo, listos para publicar.</p>
       <div class="fl" style="margin-bottom:8px"><button class="${fmt === 'c' ? 'on' : ''}" data-act="ad-fmt" data-v="c">Cuadrada</button><button class="${fmt === 'v' ? 'on' : ''}" data-act="ad-fmt" data-v="v">Vertical (estado)</button></div>
       <div class="fl" style="margin-bottom:8px">${AD_ESTILOS.map(function (e) { return html`<button class="${est === e[0] ? 'on' : ''}" data-act="ad-est" data-v="${e[0]}">${e[1]}</button>`; })}</div>
       <div class="help" style="margin-bottom:6px">${est === 'grid' ? html`1. Elige productos (<b id="ad-n">${sel.length}</b> elegidos) · hasta 6 en una imagen; si eliges más, se reparten en hojas grandes de 18` : html`1. Elige hasta 6 productos (<b id="ad-n">${sel.length}</b> elegidos) · se crea una imagen por producto`}</div>
@@ -3990,18 +3987,6 @@ function parseCSV(txt) {
 }
 var CAMPOS = [['nombre', 'Nombre', /^(nombre|producto|articulo|artículo|name|descripcion corta|item)/], ['sku', 'SKU / código', /^(sku|codigo|código|code|referencia|ref)/], ['precio', 'Precio', /^(precio|price|pvp|valor|venta)/], ['cat', 'Categoría', /^(categor|rubro|tipo|familia|category)/], ['desc', 'Descripción', /^(descrip|detalle|notas?)/], ['st', 'Existencias', /^(stock|existenc|cantidad|inventario|qty|cant)/], ['unidad', 'Unidad', /^(unidad|u\/m|um|medida|unit)/], ['costo', 'Costo', /^(costo|coste|cost|compra)/], ['moneda', 'Moneda', /^(moneda|divisa|currency)/]];
 var IMP = null;
-/* Reconoce las columnas por su título exacto (también el Excel de AxisPOS: Name, Code, Retail Price, Available Quantity, Group Name) y, si no, por el comienzo */
-var COLEXACTA = { nombre: ['name', 'nombre', 'producto', 'articulo', 'item', 'descripcion corta'], sku: ['code', 'codigo', 'sku', 'referencia', 'ref'], precio: ['retail price', 'precio', 'precio venta', 'precio de venta', 'price', 'pvp'], cat: ['group name', 'categoria', 'category', 'grupo', 'familia', 'rubro'], desc: ['description', 'descripcion', 'detalle', 'notas'], st: ['available quantity', 'existencias', 'existencia', 'stock', 'cantidad', 'inventario', 'qty', 'quantity'], unidad: ['measuring unit', 'unidad', 'u/m', 'um', 'unit', 'medida'], costo: ['purchase price', 'costo', 'coste', 'cost', 'precio de compra'], moneda: ['moneda', 'divisa', 'currency'] };
-var COLNO = /^(item type|price group|minimal|nominal|name 2|barcode|catalog|measuring unit (2|ratio)|vat|wholesale)/;
-function autoMapa(heads) {
-  var map = {}, usado = {};
-  var usa = function (k, i) { map[k] = i; usado[i] = 1; };
-  CAMPOS.forEach(function (c) { var k = c[0], ex = COLEXACTA[k] || []; for (var j = 0; j < ex.length; j++) { var i = heads.indexOf(ex[j]); if (i >= 0 && !usado[i]) { usa(k, i); return; } } });
-  CAMPOS.forEach(function (c) { var k = c[0]; if (map[k] !== undefined) return; for (var i = 0; i < heads.length; i++) if (!usado[i] && !COLNO.test(heads[i]) && c[2].test(heads[i])) { usa(k, i); return; } });
-  return map;
-}
-/* «|Herramientas y construcción|Herramientas manuales» → «Herramientas manuales»; el grupo genérico de servicio no es una categoría */
-function limpiaCat(t) { var a = String(t || '').split('|').map(function (x) { return x.trim(); }).filter(Boolean), r = a.length ? a[a.length - 1] : ''; return norm(r) === 'grupo de servicio' ? '' : r; }
 route(/^\/excel$/, function () {
   var st = ST();
   var body = html`<div class="pg stack">
@@ -4019,7 +4004,7 @@ ACT['imp-file'] = async function () {
   rows = rows.filter(function (r) { return r.some(function (x) { return String(x).trim() !== ''; }); });
   if (rows.length < 2) { toast('El archivo no tiene datos', 'bad'); return; }
   var head = rows[0].map(function (h) { return norm(h); }), map = {};
-  map = autoMapa(head);
+  CAMPOS.forEach(function (c) { for (var i = 0; i < head.length; i++) if (c[2].test(head[i]) && Object.keys(map).every(function (k) { return map[k] !== i; })) { map[c[0]] = i; break; } });
   IMP = { rows: rows, map: map, upd: true };
   pintarImport();
 };
@@ -4098,22 +4083,37 @@ function pintarImport() {
 ACT['imp-map'] = function (el) { IMP.map[el.getAttribute('data-k')] = el.value === '' ? undefined : +el.value; };
 ACT['imp-go'] = function () {
   var st = ST(), m = IMP.map; if (m.nombre === undefined) { toast('Elige la columna del nombre', 'bad'); return; }
-  IMP.upd = $('#imp-upd').checked; var add = 0, upd = 0, skip = 0, cats = {}; st.cats.forEach(function (c) { cats[norm(c.n)] = c.id; });
-  var idx = {}, sidx = {}, enArchivo = {}; st.cats.forEach(function (c) { var lc = limpiaCat(c.n); if (lc && lc !== c.n && !cats[norm(lc)]) cats[norm(lc)] = c.id; }); st.prods.forEach(function (p) { idx[norm(p.nombre)] = p; if (p.sku) sidx[skuKey(p.sku)] = p; });
+  IMP.upd = $('#imp-upd').checked; var add = 0, upd = 0, skip = 0, cats = {}, tocados = {}, conStock = []; st.cats.forEach(function (c) { cats[norm(c.n)] = c.id; });
+  var idx = {}, sidx = {}; st.prods.forEach(function (p) { idx[norm(p.nombre)] = p; if (p.sku) sidx[skuKey(p.sku)] = p; });
   var g = function (r, k) { return m[k] === undefined ? '' : String(r[m[k]] == null ? '' : r[m[k]]).trim(); };
-  IMP.rows.slice(1).forEach(function (r) {
+  IMP.rows.slice(1).forEach(function (r, fi) {
     var nombre = g(r, 'nombre'); if (!nombre) { skip++; return; }
-    var cn = limpiaCat(g(r, 'cat')), cid = ''; if (cn) { cid = cats[norm(cn)]; if (!cid) { cid = uid(); cats[norm(cn)] = cid; st.cats.push({ id: cid, n: cn }); } }
+    var cn = g(r, 'cat'), cid = ''; if (cn) { cid = cats[norm(cn)]; if (!cid) { cid = uid(); cats[norm(cn)] = cid; st.cats.push({ id: cid, n: cn }); } }
     var mon = g(r, 'moneda').toUpperCase(), sk = g(r, 'sku'), ex = (sk && sidx[skuKey(sk)]) || idx[norm(nombre)];
-    var vals = { sku: sk, precio: g(r, 'precio') === '' ? '' : num(g(r, 'precio')), desc: g(r, 'desc'), unidad: g(r, 'unidad'), st: g(r, 'st') === '' ? '' : Math.max(0, Math.round(num(g(r, 'st')))), costo: g(r, 'costo') === '' ? '' : num(g(r, 'costo')), moneda: MONEDAS.indexOf(mon) >= 0 && mon !== st.mp ? mon : '' };
-    if (ex) { enArchivo[ex.id] = 1; if (!IMP.upd) { skip++; return; } Object.keys(vals).forEach(function (k) { if (m[k] !== undefined && vals[k] !== '') ex[k] = vals[k]; }); if (cid) ex.cat = cid; ex.u = Date.now(); upd++; }
-    else { var p = nuevoProducto(st); p.nombre = nombre; p.cat = cid; Object.keys(vals).forEach(function (k) { p[k] = vals[k]; }); st.prods.push(p); enArchivo[p.id] = 1; idx[norm(nombre)] = p; if (sk) sidx[skuKey(sk)] = p; add++; }
+    /* dos filas del archivo con distinto SKU son dos productos, aunque se llamen igual: no se pisan entre sí */
+    if (ex && tocados[ex.id] && !(sk && ex.sku && skuKey(ex.sku) === skuKey(sk))) ex = null;
+    var vals = { sku: sk, precio: g(r, 'precio') === '' ? '' : num(g(r, 'precio')), desc: g(r, 'desc'), unidad: g(r, 'unidad'), st: g(r, 'st') === '' ? '' : Math.max(0, Math.round(num(g(r, 'st')) * 1000) / 1000), costo: g(r, 'costo') === '' ? '' : num(g(r, 'costo')), moneda: MONEDAS.indexOf(mon) >= 0 && mon !== st.mp ? mon : '' };
+    var fin;
+    if (ex) { if (!IMP.upd) { skip++; return; } Object.keys(vals).forEach(function (k) { if (m[k] !== undefined && vals[k] !== '') ex[k] = vals[k]; }); if (cid) ex.cat = cid; ex.u = Date.now(); upd++; fin = ex; if (sk) sidx[skuKey(sk)] = ex; }
+    else { var p = nuevoProducto(st); p.nombre = nombre; p.cat = cid; Object.keys(vals).forEach(function (k) { p[k] = vals[k]; }); st.prods.push(p); idx[norm(nombre)] = p; if (sk) sidx[skuKey(sk)] = p; add++; fin = p; }
+    tocados[fin.id] = 1;
+    if (vals.st !== '' && vals.st > 0) conStock.push({ fila: fi + 2, sku: sk, nombre: nombre, st: vals.st, p: fin });
   });
-  /* Si el archivo trae existencias, un producto con SKU que ya no viene en él (se agotó y salió de la lista) pasa a agotado */
-  var aus = 0; if (m.st !== undefined && IMP.upd && (add + upd) >= 20) st.prods.forEach(function (p) { if (!enArchivo[p.id] && p.sku && p.st !== '' && p.st != null && num(p.st) > 0) { p.st = 0; p.u = Date.now(); aus++; } });
-  touch(st); IMP = null; var nd = st.prods.filter(esDisp).length;
-  $('#imp-out').innerHTML = '<div class="banner info" style="margin-top:12px"><b>Listo.</b> ' + add + ' nuevos, ' + upd + ' actualizados' + (skip ? ', ' + skip + ' omitidos' : '') + (aus ? ', ' + aus + ' pasaron a agotado por no venir en el archivo' : '') + '.<br>Ahora hay <b>' + nd + '</b> productos disponibles de ' + st.prods.length + '. Agrega fotos y publica.</div>';
+  touch(st); IMP = null;
+  var libre = function (p) { var s = stockDe(p); return !(!p.disp || (s !== null && s <= 0)); };
+  var nDisp = st.prods.filter(libre).length, falt = conStock.filter(function (c) { return !libre(c.p); });
+  IMP_FALT = falt.map(function (c) { return c.p.id; }).filter(function (id, i, a) { return a.indexOf(id) === i; });
+  var det = falt.slice(0, 8).map(function (c) { var s = stockDe(c.p); return esc((c.sku ? c.sku + ' · ' : '') + c.nombre) + ' (fila ' + c.fila + ': ' + c.st + ' en el archivo → ' + (s === null ? 'sin dato' : s) + ' en el panel' + (!c.p.disp ? '; está marcado como no disponible' : '; otra fila del archivo lo dejó sin existencias') + ')'; }).join('<br>');
+  $('#imp-out').innerHTML = '<div class="banner info" style="margin-top:12px"><b>Listo.</b> ' + add + ' nuevos, ' + upd + ' actualizados' + (skip ? ', ' + skip + ' omitidos' : '') + '. Ahora hay <b>' + nDisp + '</b> productos disponibles de ' + st.prods.length + '.' +
+    (conStock.length ? ' El archivo traía ' + conStock.length + ' filas con existencias.' : '') +
+    (falt.length ? '<br><b>' + falt.length + ' con existencias en el archivo no quedaron disponibles:</b><br>' + det + (falt.length > 8 ? '<br>…y ' + (falt.length - 8) + ' más.' : '') + (falt.some(function (c) { return !c.p.disp; }) ? '<br><button class="btn sm" style="margin-top:8px" data-act="imp-activar">Marcar como disponibles los que están desactivados</button>' : '') : '') +
+    '<br>Agrega fotos desde la lista de productos y publica.</div>';
   toast('Importación terminada');
+};
+var IMP_FALT = [];
+ACT['imp-activar'] = function () {
+  var st = ST(), n = 0; st.prods.forEach(function (p) { if (IMP_FALT.indexOf(p.id) >= 0 && !p.disp && stockDe(p) !== null && stockDe(p) > 0) { p.disp = true; p.u = Date.now(); n++; } });
+  touch(st); IMP_FALT = []; toast(n + ' productos marcados como disponibles', 'ok', 4000); var b = $('[data-act=imp-activar]'); if (b) b.remove();
 };
 ACT['exp-xlsx'] = async function (el) {
   var st = ST(), v = el.getAttribute('data-v'), rows, nom, hoja;
@@ -4610,7 +4610,7 @@ publicar = async function (st, o) {
     if (st.espec && P(st.espec)) setPath(base, 'especialidades.foto', P(st.espec));
     if (APP.cfg.fb && APP.cfg.fb.url && st.slug) setPath(base, 'firebase', { url: String(APP.cfg.fb.url).replace(/\/+$/, ''), slug: st.slug });
     var oc = {}; (base.categorias || []).forEach(function (x) { oc[x.id] = x; });
-    base.categorias = st.cats.map(function (x) { return { id: x.id, nombre: limpiaCat(x.n) || x.n, icono: (oc[x.id] || {}).icono || 'caja' }; });
+    base.categorias = st.cats.map(function (x) { return { id: x.id, nombre: x.n, icono: (oc[x.id] || {}).icono || 'caja' }; });
     var op = {}; (base.productos || []).forEach(function (x) { op[x.id] = x; }); var top = {}; st.prods.filter(function (q) { return +q.vend >= 1; }).sort(function (a, b) { return b.vend - a.vend; }).slice(0, 24).forEach(function (q) { top[q.id] = 1; }); var hoy = ahoraHabana().fecha;
     base.productos = st.prods.filter(function (p) { return p.nombre; }).map(function (p, i) {
       var o0 = op[p.id] || {}, cur = monedaDe(st, p), stk = stockDe(p), ph = p.fotos.slice(0, 5).map(P).filter(Boolean);
@@ -4750,24 +4750,24 @@ async function srvEstado(ms) {
 }
 async function srvSync(ms) {
   var j = await srvEstado(ms), st = ST(); if (!st) throw new Error('Primero trae o crea la tienda.');
-  var bySku = {}, byNom = {}; st.prods.forEach(function (p) { if (p.sku) bySku[nz(p.sku)] = p; byNom[nz(p.nombre)] = p; });
+  var bySku = {}, byNom = {}; st.prods.forEach(function (p) { if (p.sku) bySku[skuKey(p.sku)] = p; byNom[nz(p.nombre)] = p; });
   var n = 0, sin = 0, ahora = Date.now(), primera = !st.srvT, lote = [], vistos = {}, cambioPrecio = 0, sinReg = 0;
   j.items.forEach(function (it) {
-    var p = bySku[nz(it.sku)] || byNom[nz(it.nombre)]; if (!p) { sin++; return; }
+    var p = (it.sku && bySku[skuKey(it.sku)]) || byNom[nz(it.nombre)]; if (!p) { sin++; return; }
     var antes = stockDe(p);
-    if (it.stock != null) p.st = Math.max(0, Math.round(it.stock));
+    if (it.stock != null) p.st = Math.max(0, Math.round(it.stock * 1000) / 1000); /* conserva decimales (0,4 m de cable no es agotado) */
     else if (p.st !== '' && p.st != null && num(p.st) > 0) { p.st = 0; sinReg++; } /* el sistema ya no tiene registro de existencias de un producto que tenía: se agotó */
     var desp = stockDe(p);
     /* llegó o volvió a tener cantidad: estaba en 0, o no tenía existencias registradas (salvo la primera lectura) */
     if (desp !== null && desp > 0 && (antes !== null ? antes <= 0 : !primera)) lote.push(p);
-    p.vend = +it.vendido || 0; n++; vistos[nz(it.sku)] = 1; if (p.sku) vistos[nz(p.sku)] = 1;
+    p.vend = +it.vendido || 0; n++; vistos[p.id] = 1;
     /* precio: si cambió en el sistema, el catálogo lo toma (solo productos en la moneda base) */
     var np = Number(it.precio);
     if (isFinite(np) && np > 0 && monedaDe(st, p) === st.mp && Math.abs(num(p.precio) - np) > 0.004) { p.precio = np; if (num(p.ofertaPrecio) >= np) { p.ofertaPrecio = ''; } cambioPrecio++; p.u = ahora; }
   });
   /* un producto con control de existencias que el sistema ya no lista (se agotó y salió de su lista) pasa a agotado */
   var ausentes = 0;
-  if (j.items.length) st.prods.forEach(function (p) { if (p.sku && !vistos[nz(p.sku)] && p.st !== '' && p.st != null && num(p.st) > 0) { p.st = 0; ausentes++; } });
+  if (j.items.length) st.prods.forEach(function (p) { if (p.sku && !vistos[p.id] && p.st !== '' && p.st != null && num(p.st) > 0) { p.st = 0; ausentes++; } });
   if (lote.length) { st.srvLote = ahora; lote.forEach(function (p) { p.llego = ahora; }); }
   st.srvT = ahora;
   st.dirty = true; save(true); return { n: n, sin: sin, ventas: j.ventas, llegaron: lote.length, precios: cambioPrecio, agotados: ausentes + sinReg };
