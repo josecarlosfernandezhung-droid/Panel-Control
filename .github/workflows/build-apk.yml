@@ -28,12 +28,12 @@ jobs:
           fi
           ls -la debug.keystore
 
-      - name: Instalar dependencias del sistema
+      - name: Instalar dependencias del sistema (ImageMagick para iconos)
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq imagemagick || true
+          sudo apt-get install -y -qq imagemagick
 
-      - name: Instalar dependencias npm
+      - name: Instalar dependencias
         run: npm install
 
       - name: Crear proyecto Android
@@ -46,12 +46,11 @@ jobs:
       - name: Icono de la app
         run: |
           if ! command -v convert >/dev/null 2>&1; then
-            echo "convert no disponible; iconos por defecto"
+            echo "convert no disponible; se dejan iconos por defecto de Capacitor"
             exit 0
           fi
           for d in mdpi:48 hdpi:72 xhdpi:96 xxhdpi:144 xxxhdpi:192; do
-            n=${d%%:*}
-            s=${d##*:}
+            n=${d%%:*}; s=${d##*:}
             mkdir -p android/app/src/main/res/mipmap-$n
             convert icon.png -resize ${s}x${s} android/app/src/main/res/mipmap-$n/ic_launcher.png
             cp android/app/src/main/res/mipmap-$n/ic_launcher.png android/app/src/main/res/mipmap-$n/ic_launcher_round.png
@@ -59,10 +58,17 @@ jobs:
           done
           rm -rf android/app/src/main/res/mipmap-anydpi-v26 || true
 
-      - name: Firma fija
-        run: bash scripts/fix-signing.sh
+      - name: Firma fija (debug.keystore del repo)
+        run: |
+          mkdir -p ~/.android
+          cp -f debug.keystore ~/.android/debug.keystore
+          mkdir -p android/app
+          cp -f debug.keystore android/app/debug.keystore
+          # El debug de Android usa ~/.android/debug.keystore (alias androiddebugkey, clave android): con eso queda la misma firma, sin tocar build.gradle
+          keytool -list -keystore debug.keystore -storepass android | head -8
+          ls -la ~/.android/debug.keystore android/app/debug.keystore
 
-      - name: Numero de version
+      - name: Número de versión
         run: |
           if [ -f android/app/build.gradle ]; then
             sed -i "s/versionCode [0-9]*/versionCode ${{ github.run_number }}/" android/app/build.gradle
@@ -72,15 +78,15 @@ jobs:
       - name: Sincronizar Capacitor
         run: npx cap sync android
 
-      - name: Inyectar plugin CatalogoBackup
+      - name: Inyectar plugin CatalogoBackup (después de sync)
         run: bash scripts/inject-backup-plugin.sh
 
-      - name: Inyectar plugin Nativo
+      - name: Inyectar plugin Nativo (restaurar y catálogo compartido)
+        id: nativo
         continue-on-error: true
         run: bash scripts/inject-nativo.sh
 
-      - name: Optimizar WebView
-        continue-on-error: true
+      - name: Optimizar WebView (rendimiento)
         run: bash scripts/inject-perf.sh
 
       - name: Compilar APK
@@ -90,9 +96,9 @@ jobs:
           cd android
           chmod +x gradlew
           if ! ./gradlew assembleDebug --no-daemon --stacktrace; then
-            echo "Fallo con plugin Nativo; recompilando sin el..."
+            echo "::warning::Falló la compilación con el plugin Nativo. Se recompila sin él (el panel usa su camino de siempre)."
             cd ..
-            bash scripts/quitar-nativo.sh || true
+            bash scripts/quitar-nativo.sh
             cd android
             ./gradlew assembleDebug --no-daemon --stacktrace
           fi
