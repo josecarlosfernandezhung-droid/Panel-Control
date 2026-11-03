@@ -2,6 +2,19 @@
   "appId": "com.tototools.catalogo",
   "appName": "Catálogo de Productos",
   "webDir": "www",
-  "server": { "androidScheme": "https", "cleartext": true },
-  "android": { "allowMixedContent": true }
+  "server": {
+    "androidScheme": "https",
+    "cleartext": true
+  },
+  "android": {
+    "allowMixedContent": true,
+    "backgroundColor": "#f2f6f6",
+    "webContentsDebuggingEnabled": false
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchAutoHide": true,
+      "launchShowDuration": 0
+    }
+  }
 }

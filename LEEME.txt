@@ -1,42 +1,40 @@
-Catálogo de Productos — híbrido HTML + plugin Kotlin de backup
-==============================================================
+Catálogo de Productos — APK más rápido
+======================================
 
-¿A QUÉ REPOSITORIO SUBIR ESTO?
+Optimizaciones de esta versión
 ------------------------------
-Sube ESTE paquete (híbrido Capacitor + HTML + plugin backup) al
-repositorio donde compilabas el APK ANTERIOR con Capacitor
-(el de tu panel web / index.html).
+1. Fotos de la lista: solo se cargan al entrar en pantalla (lazy load).
+2. Búsqueda: espera 180 ms al escribir (no recalcula en cada tecla).
+3. Contadores de filtros: un solo recorrido de productos (antes 5).
+4. Lista inicial: 40 productos (antes 60); “Ver más” suma 40.
+5. Guardado automático: cada 600 ms (menos JSON.stringify pesados).
+6. WebView Android: aceleración por hardware + largeHeap.
+7. Misma firma (debug.keystore) para actualizar sin desinstalar.
 
-NO lo mezcles con el repo de la app nativa Kotlin/Compose
-(si creaste uno aparte para esa prueba).
+Qué NO cambia
+-------------
+- Tu diseño HTML
+- Plugin de backup / nativo
+- Datos y Firebase
 
-Motivo: mismo appId (com.tototools.catalogo) + mismo debug.keystore
-→ puedes ACTUALIZAR sin desinstalar y no pierdes datos.
+Cómo compilar
+-------------
+Sube el contenido de esta carpeta a la RAÍZ del repo Capacitor
+(.github, www, package.json, debug.keystore, native-plugins, scripts…)
+Actions → Compilar APK → Run workflow.
 
-Si el repo nativo Compose usó OTRA firma, ese APK y este no se
-actualizan entre sí: hay que desinstalar una vez y luego quedarte
-solo con esta línea (híbrida).
+Con ~700 productos notarás sobre todo:
+- Abrir Productos más rápido
+- Scroll más fluido
+- Buscar sin tirones
 
-Qué incluye
------------
-- Tu diseño HTML (www/index.html)
-- Plugin Kotlin CatalogoBackup (copias con fotos en nativo)
-- debug.keystore fijo + workflow que lo obliga (si falta, falla el build a propósito)
-- GitHub Actions: Compilar APK
+Excel de AxisPOS y conteo de disponibles
+----------------------------------------
+- Importar Excel reconoce solo las columnas del Excel de AxisPOS: Name, Code, Retail Price, Available Quantity y Group Name (revisa que queden bien en los selectores antes de importar).
+- «Disponible» tiene ahora una sola regla en Productos, Compartir y la web: publicado + marcado disponible + con existencias.
+- Las fotos de miniaturas vuelven a cargar en ventanas y visor (corrección del cargado diferido).
 
-Cómo subir (PC)
----------------
-1. Descomprime Catalogo-hibrido-apk.zip
-2. Contenido de la carpeta catalogo-hibrido → RAÍZ del repo Capacitor
-   Debe verse: .github, www, package.json, debug.keystore, native-plugins, scripts
-3. Commit + push a main/master
-4. Actions → Compilar APK → Run workflow
-5. Instala el APK (encima del anterior si la firma coincide)
-
-Firma (actualizar sin desinstalar)
-----------------------------------
-El workflow:
-- Exige debug.keystore en la raíz
-- Lo copia a ~/.android y a android/app/
-- Configura signingConfigs.debug con esa clave
-Si falta el keystore, el Action FALLA (mejor que firmar con otra clave a ciegas).
+Workflow corregido
+------------------
+build-apk.yml tenía un bloque de Python mal indentado dentro de «Firma fija» (YAML inválido: GitHub no lo leía) que además inyectaba la firma en build.gradle de forma que podía romper Gradle.
+Ahora ese paso solo copia debug.keystore a ~/.android (la firma debug de Android) y muestra su huella: misma firma, sin tocar build.gradle.
