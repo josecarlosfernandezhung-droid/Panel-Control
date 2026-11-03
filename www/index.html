@@ -2012,7 +2012,7 @@ function hydrate(root) {
   if (!('IntersectionObserver' in window)) { imgs.forEach(load); return; }
   if (!_phIO) _phIO = new IntersectionObserver(function (es) {
     es.forEach(function (e) { if (e.isIntersecting) { _phIO.unobserve(e.target); load(e.target); } });
-  }, { root: document.getElementById('view') || null, rootMargin: '120px', threshold: 0.01 });
+  }, { root: null, rootMargin: '160px', threshold: 0.01 });
   imgs.forEach(function (im) { _phIO.observe(im); });
 }
 function phImg(id, sz) { return id ? raw('<img data-ph="' + esc(id) + '" data-sz="' + (sz || 't') + '" alt="">') : raw(''); }
@@ -3986,6 +3986,37 @@ function parseCSV(txt) {
   return rows;
 }
 var CAMPOS = [['nombre', 'Nombre', /^(nombre|producto|articulo|artículo|name|descripcion corta|item)/], ['sku', 'SKU / código', /^(sku|codigo|código|code|referencia|ref)/], ['precio', 'Precio', /^(precio|price|pvp|valor|venta)/], ['cat', 'Categoría', /^(categor|rubro|tipo|familia|category)/], ['desc', 'Descripción', /^(descrip|detalle|notas?)/], ['st', 'Existencias', /^(stock|existenc|cantidad|inventario|qty|cant)/], ['unidad', 'Unidad', /^(unidad|u\/m|um|medida|unit)/], ['costo', 'Costo', /^(costo|coste|cost|compra)/], ['moneda', 'Moneda', /^(moneda|divisa|currency)/]];
+/* Detección de columnas: primero nombres exactos, después parecidos; se descartan columnas vacías o en cero (ej. «Price Group 1») */
+var CAMPOS_PRI = {
+  nombre: [/^(nombre|name|producto|product|articulo|artículo)$/, /^(nombre|producto|articulo|artículo|name)\b/],
+  sku: [/^(sku|codigo|código|code|referencia|ref)$/, /^(sku|codigo|código|code|referencia|ref)\b/],
+  precio: [/^(precio|price|pvp|precio venta|precio de venta|retail price|valor|venta)$/, /retail price|precio (de )?venta|^precio|^pvp/, /^price(?! group)/],
+  cat: [/^(categoria|categorias|category|rubro|familia|grupo|group name|group)$/, /group name|grupo|categor|rubro|familia/],
+  desc: [/^(descripcion|description|detalle|notas?)$/, /^(descrip|detalle|notas?)/],
+  st: [/^(stock|existencias?|cantidad|qty|cant|inventario|available quantity|quantity)$/, /available|disponib|existenc|stock/, /^(cantidad|qty|cant|inventario)/],
+  unidad: [/^(unidad|u\/m|um|medida|unit|measuring unit)$/, /^(unidad|u\/m|um|medida|unit)|measuring unit/],
+  costo: [/^(costo|coste|cost|compra|purchase price|precio de compra)$/, /costo|coste|cost|purchase|compra/],
+  moneda: [/^(moneda|divisa|currency)$/, /^(moneda|divisa|currency)/]
+};
+function autoMapear(rows, head) {
+  var map = {}, usado = function (i) { return Object.keys(map).some(function (k) { return map[k] === i; }); };
+  var datos = rows.slice(1);
+  var colOk = function (campo, i) {
+    var vals = datos.map(function (r) { return String(r[i] == null ? '' : r[i]).trim(); }).filter(function (v) { return v !== ''; });
+    if (!vals.length) return false;
+    if (campo === 'precio' || campo === 'costo') return vals.some(function (v) { return num(v) > 0; });
+    if (campo === 'nombre' || campo === 'cat') return vals.some(function (v) { return /[a-záéíóúñ]/i.test(v); });
+    return true;
+  };
+  CAMPOS.forEach(function (c) {
+    var pri = CAMPOS_PRI[c[0]] || [];
+    for (var k = 0; k < pri.length && map[c[0]] === undefined; k++)
+      for (var i = 0; i < head.length; i++) if (pri[k].test(head[i]) && !usado(i) && colOk(c[0], i)) { map[c[0]] = i; break; }
+  });
+  /* respaldo: el criterio de siempre, para lo que no se haya reconocido */
+  CAMPOS.forEach(function (c) { if (map[c[0]] !== undefined) return; for (var i = 0; i < head.length; i++) if (c[2].test(head[i]) && !usado(i)) { map[c[0]] = i; break; } });
+  return map;
+}
 var IMP = null;
 route(/^\/excel$/, function () {
   var st = ST();
@@ -4004,7 +4035,7 @@ ACT['imp-file'] = async function () {
   rows = rows.filter(function (r) { return r.some(function (x) { return String(x).trim() !== ''; }); });
   if (rows.length < 2) { toast('El archivo no tiene datos', 'bad'); return; }
   var head = rows[0].map(function (h) { return norm(h); }), map = {};
-  CAMPOS.forEach(function (c) { for (var i = 0; i < head.length; i++) if (c[2].test(head[i]) && Object.keys(map).every(function (k) { return map[k] !== i; })) { map[c[0]] = i; break; } });
+  map = autoMapear(rows, head);
   IMP = { rows: rows, map: map, upd: true };
   pintarImport();
 };
@@ -4174,7 +4205,8 @@ async function crearBackup(conFotos, nivel, parte) {
     }
   }
   setBusyText('Creando el archivo…');
-  var out = await zip.generateAsync({ type: 'blob', compression: 'STORE', streamFiles: true }, function (m) { setBusyText('Creando el archivo… ' + Math.round(m.percent) + '%'); });
+  /* sin streamFiles: así cada entrada trae su tamaño al inicio y cualquier lector (también el de Android) la entiende */
+  var out = await zip.generateAsync({ type: 'blob', compression: 'STORE' }, function (m) { setBusyText('Creando el archivo… ' + Math.round(m.percent) + '%'); });
   out._fotosOk = fotosOk;
   out._fotosFail = fotosFail;
   return out;
@@ -4253,7 +4285,7 @@ async function flujoRestaurar() {
     try {
       var rn = await NAT.p.elegirZip({ modo: mN, conservarMejor: true });
       if (rn && rn.cancelado) { d0(); return; }
-      if (!rn || rn.invalido || !rn.datos) throw new Error('Este archivo no es una copia del Catálogo de Productos.');
+      if (!rn || rn.invalido || !rn.datos) throw new Error('Este archivo no es una copia del Catálogo de Productos.' + (rn && rn.entradas && rn.entradas.length ? ' Contiene: ' + rn.entradas.join(', ') + (rn.entradas.length >= 6 ? '…' : '') : ''));
       setBusyText('Restaurando…'); MEMF = {}; PURL = {};
       var r0 = aplicarCopia(JSON.parse(rn.datos), rn.fotos || 0, mN, rn.mantenidas || 0); d0();
       toast(msgRestaurado(r0), 'ok', 5000); go('/'); return;
