@@ -2539,7 +2539,7 @@ function switchRow(label, sub, checked, attr) {
 function bannerPublicar(st) {
   if (!hayNube()) return html`<div class="banner info"><b>Modo sin conexión.</b> Tu catálogo se guarda en este teléfono. Para publicarlo en internet, <a href="#/conexion">configura la conexión</a>.</div>`;
   if (!logged()) return html`<div class="banner warn"><b>Falta iniciar sesión.</b> Entra a tu cuenta para publicar el catálogo. <a href="#/conexion">Iniciar sesión</a></div>`;
-  if (st.dirty || !st.pubAt) return html`<div class="banner warn"><div><b>${st.pubAt ? 'Tienes cambios sin publicar.' : 'Tu catálogo aún no está publicado.'}</b></div><button class="btn pri sm" style="margin-top:8px" data-act="publicar">${ic('cloud', 18)}Publicar ahora</button></div>`;
+  if (st.dirty || !st.pubAt) return html`<div class="banner warn"><div><b>${st.pubAt ? 'Tienes cambios sin publicar.' : 'Tu catálogo aún no está publicado.'}</b></div><div class="wr" style="margin-top:8px"><button class="btn pri sm" data-act="publicar">${ic('cloud', 18)}Publicar todo</button>${st.pubAt ? html`<button class="btn sm" data-act="pub-rapido">${ic('refresh', 16)}Solo existencias y precios</button>` : ''}</div></div>`;
   return '';
 }
 function checklist(st) {
@@ -4328,7 +4328,7 @@ route(/^\/conexion$/, function () {
       <label class="lbl">Clave de API</label><input class="in" data-f="ai.key" value="${c.ai.key}" autocapitalize="none"><label class="lbl">Modelo (opcional)</label><input class="in" data-f="ai.model" value="${c.ai.model}" placeholder="${c.ai.prov === 'anthropic' ? 'claude-haiku-5-5' : 'gemini-2.0-flash'}" autocapitalize="none"></div>
     <div class="card"><h2>Archivo config.js</h2><p class="help" style="margin:0 0 8px">Súbelo junto a <b>index.html</b> en tu hosting para que el catálogo público sepa dónde leer los datos.</p><textarea class="in" readonly style="font-family:monospace;font-size:13px;min-height:90px">${configJsTexto()}</textarea><button class="btn sm" style="margin-top:8px" data-act="copy-cfg">${ic('copy', 16)}Copiar</button></div>
     <div class="card"><h2>Copia de seguridad</h2><p class="help" style="margin:0 0 8px">Guarda tus tiendas y fotos en un archivo. Úsalo para pasar todo a otro teléfono sin internet.</p><div class="wr"><button class="btn sm" data-act="bk-save" data-f="1">${ic('download', 16)}Con fotos</button><button class="btn sm" data-act="bk-save" data-f="0">Solo datos</button><button class="btn sm" data-act="bk-load">${ic('upload', 16)}Restaurar</button></div></div>
-    ${st ? html`<div class="card"><h2>Tienda actual</h2><div class="wr"><button class="btn sm" data-act="repub">${ic('refresh', 16)}Volver a publicar todo</button><button class="btn sm dan" data-act="tienda-del">${ic('trash', 16)}Eliminar tienda de este teléfono</button></div></div>` : ''}
+    ${st ? html`<div class="card"><h2>Tienda actual</h2><div class="wr"><button class="btn sm" data-act="repub">${ic('refresh', 16)}Volver a publicar todo</button><button class="btn sm" data-act="pub-rapido">${ic('refresh', 16)}Publicar solo existencias y precios</button><button class="btn sm dan" data-act="tienda-del">${ic('trash', 16)}Eliminar tienda de este teléfono</button></div></div>` : ''}
   </div>`;
   return { title: 'Cuenta y conexión', back: st ? '/menu' : '', nav: st ? 'menu' : false, body: body };
 });
@@ -4350,6 +4350,16 @@ ACT['nube-restaurar'] = async function () { var done = busy('Buscando en tu nube
 ACT['copy-cfg'] = function () { copiar(configJsTexto()); };
 ACT['bk-save'] = function (el) { el.setAttribute('data-v', el.getAttribute('data-f')); return ACT['bk-crear'](el); };
 ACT['bk-load'] = function () { return flujoRestaurar(); };
+ACT['pub-rapido'] = async function () {
+  var st = ST(), bad = puedePublicar(st);
+  if (bad) { toast(bad, 'bad', 4500); if (!hayNube() || !logged()) go('/conexion'); return; }
+  var done = busy('Publicando existencias y precios…');
+  try {
+    var r = await publicar(st, { rapido: true }); done();
+    toast(r.cambiados ? 'Existencias y precios publicados ✓ · ' + r.cambiados + ' producto(s) cambiados' + (r.sinPub ? ' · ' + r.sinPub + ' nuevos esperan a «Publicar todo»' : '') : 'Existencias y precios al día: no había nada que cambiar' + (r.sinPub ? ' · ' + r.sinPub + ' productos nuevos esperan a «Publicar todo»' : ''), '', 5000);
+    refresh();
+  } catch (e) { done(); await aviso('No se pudo publicar', e.message + ' Tus cambios siguen guardados en el teléfono.'); }
+};
 ACT.repub = async function () { var st = ST(), bad = puedePublicar(st); if (bad) { toast(bad, 'bad', 4000); return; } var done = busy('Publicando todo…'); try { await publicar(st, { force: true }); done(); toast('Catálogo publicado ✓'); } catch (e) { done(); await aviso('No se pudo publicar', e.message); } };
 ACT['tienda-del'] = async function () {
   var st = ST(); if (!(await confirmar('¿Eliminar «' + st.nombre + '» de este teléfono?', 'Eliminar', true, 'Si ya la publicaste y tienes cuenta, la copia en la nube y el catálogo publicado no se borran.'))) return;
@@ -4616,7 +4626,7 @@ publicar = async function (st, o) {
   if (st.sitioPend) { await window.crearSitioTienda(st); }
   var B = G().branch || 'main'; if ((APP.cfg.srv || {}).url) { try { setBusyText('Leyendo stock y ventas del servidor…'); await srvSync(6000); } catch (e) { try { toast('No se pudo leer el servidor de pedidos: se publica con el stock y precios que ya tiene el panel', 'bad', 5000); } catch (e9) { } } } setBusyText('Leyendo el sitio…'); var base = await leer();
   var old = st.ghFotos || {}, repoSet = null;
-  try { setBusyText('Revisando las fotos del sitio…'); repoSet = await arbolRepo(B); } catch (eT) { repoSet = null; }
+  if (!o.rapido) { try { setBusyText('Revisando las fotos del sitio…'); repoSet = await arbolRepo(B); } catch (eT) { repoSet = null; } }
   if (repoSet) { old = Object.assign({}, old); Object.keys(old).forEach(function (k) { if (!repoSet.has(old[k])) delete old[k]; }); }
   if (repoSet) { fotosUsadas(st).forEach(function (id) { if (!old[id]) { var ex = ((id === st.logo || id === st.portada || id === st.espec) ? 'img/marca/' : 'img/productos/') + id + '.webp'; if (repoSet.has(ex)) old[id] = ex; } }); }
   var ids = fotosUsadas(st).filter(function (id) { return o.force || !old[id]; });
@@ -4663,6 +4673,29 @@ publicar = async function (st, o) {
     var cat = armarCatalogo();
     var bj = await gh('/git/blobs', 'POST', { content: JSON.stringify(cat, null, 1), encoding: 'utf-8' });
     await commitar([{ path: 'datos/catalogo.json', mode: '100644', type: 'blob', sha: bj.sha }].concat(extra || []), msg || 'Actualización desde el panel');
+  }
+  if (o.rapido) {
+    /* Solo existencias y precios: no sube fotos ni toca textos, categorías, horario ni nada más del sitio. Parte de lo ya publicado y cambia solo esos datos de los productos que ya están en el sitio. */
+    var pubIdx = {}; (base.productos || []).forEach(function (x) { pubIdx[x.id] = x; });
+    if (!Object.keys(pubIdx).length) throw new Error('El sitio todavía no tiene catálogo publicado: la primera vez usa «Publicar todo».');
+    setBusyText('Preparando existencias y precios…');
+    var snap = JSON.parse(JSON.stringify(base)), nuevoCat = armarCatalogo(), nuevosP = {};
+    nuevoCat.productos.forEach(function (x) { nuevosP[x.id] = x; });
+    var CAMPOS = ['precio', 'precioOferta', 'precioTransf', 'precioOfertaTransf', 'agotado'], cambiados = 0;
+    snap.productos.forEach(function (x) {
+      var n = nuevosP[x.id]; if (!n) return; var cam = false;
+      CAMPOS.forEach(function (k) { if (JSON.stringify(x[k]) !== JSON.stringify(n[k])) { x[k] = n[k]; cam = true; } });
+      if (x.visible !== n.visible && st.ocAg) { x.visible = n.visible; cam = true; }
+      if (cam) cambiados++;
+    });
+    var sinPub = nuevoCat.productos.filter(function (x) { return !pubIdx[x.id]; }).length;
+    if (cambiados) {
+      setBusyText('Publicando ' + cambiados + ' cambio(s) de existencias y precios…');
+      var bjR = await gh('/git/blobs', 'POST', { content: JSON.stringify(snap, null, 1), encoding: 'utf-8' });
+      await commitar([{ path: 'datos/catalogo.json', mode: '100644', type: 'blob', sha: bjR.sha }], 'Existencias y precios desde el panel');
+    }
+    st.pubAt = Date.now(); save(true);
+    return { cambios: cambiados ? 1 : 0, rapido: true, cambiados: cambiados, sinPub: sinPub, v: st.pubAt };
   }
   var pend = ids.slice(), totalF = pend.length, vistas = 0, subidas = 0, nT = 0, nTot = Math.max(1, Math.ceil(totalF / TANDA_FOTOS));
   var errorParcial = null, ilegibles = [];
@@ -4836,7 +4869,7 @@ ROUTES.unshift([/^\/conexion$/, function () {
       <p class="help" style="margin:8px 0 0">Necesita internet. Se envían el nombre, la categoría y la foto principal en miniatura. Si la IA falla, se usan las plantillas locales.</p></div>
     ${st ? html`<div class="card"><h2>Textos del sitio</h2>${SF.map(function (f) { return html`<label class="lbl">${f[1]}</label><input class="in" data-ghs="${f[0]}" value="${S[f[0]] || ''}">`; })}<label class="lbl"><input type="checkbox" data-ghs="aviso.activo" ${S['aviso.activo'] ? raw('checked') : ''}> Mostrar el aviso en la web</label></div>` : ''}
     <div class="card"><h2>Copia de seguridad</h2><p class="help" style="margin:0 0 8px">Guarda tus tiendas y fotos en un archivo. Úsalo para pasar todo a otro teléfono sin internet.</p><div class="wr"><button class="btn sm" data-act="bk-save" data-f="1">${ic('download', 16)}Con fotos</button><button class="btn sm" data-act="bk-save" data-f="0">Solo datos</button><button class="btn sm" data-act="bk-load">${ic('upload', 16)}Restaurar</button></div></div>
-    ${st ? html`<div class="card"><h2>Tienda actual</h2><div class="wr"><button class="btn sm" data-act="repub">${ic('refresh', 16)}Volver a publicar todo</button><button class="btn sm dan" data-act="tienda-del">${ic('trash', 16)}Eliminar tienda de este teléfono</button></div></div>` : ''}</div>`;
+    ${st ? html`<div class="card"><h2>Tienda actual</h2><div class="wr"><button class="btn sm" data-act="repub">${ic('refresh', 16)}Volver a publicar todo</button><button class="btn sm" data-act="pub-rapido">${ic('refresh', 16)}Publicar solo existencias y precios</button><button class="btn sm dan" data-act="tienda-del">${ic('trash', 16)}Eliminar tienda de este teléfono</button></div></div>` : ''}</div>`;
   return { title: 'Cuenta y conexión', back: st ? '/menu' : '', nav: st ? 'menu' : false, body: body };
 }]);
 document.addEventListener('change', function (e) { var k = e.target.getAttribute && e.target.getAttribute('data-ghs'); if (!k) return; var st = ST(); st.sitio = st.sitio || {}; st.sitio[k] = e.target.type === 'checkbox' ? e.target.checked : e.target.value; touch(st); });
