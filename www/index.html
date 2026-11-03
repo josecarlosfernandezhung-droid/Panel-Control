@@ -225,6 +225,9 @@ function hmTxt(s) { var m = hm(s); if (m == null) return ''; var h = Math.floor(
 function horarioBase() { var a = []; for (var i = 0; i < 7; i++) a.push({ c: i === 0, a: '09:00', z: '18:00' }); return a; }
 
 /* Clave de comparación de un SKU/código: sin acentos ni espacios y, si es solo número, sin ceros a la izquierda (Excel los quita) */
+/* Disponible = publicado, con nombre, marcado disponible y con existencias (si se controlan). Es la misma regla en Productos, Compartir y la web. */
+function esDisp(p) { if (!p || !p.nombre || p.vis === false || p.disp === false) return false; var s = stockDe(p); return !(s !== null && s <= 0); }
+
 function skuKey(s) {
   var b = norm(String(s == null ? '' : s)).replace(/\s+/g, '');
   return /^\d+$/.test(b) ? String(parseInt(b, 10)) : b;
@@ -1658,7 +1661,7 @@ function loadApp() {
   APP.ui = APP.ui || {};
   APP.stores.forEach(migrar);
 }
-function save(now) { clearTimeout(saveT); if (now) doSave(); else saveT = setTimeout(doSave, 300); }
+function save(now) { clearTimeout(saveT); if (now) doSave(); else saveT = setTimeout(doSave, 600); }
 function doSave() { try { localStorage.setItem('catalogo:app', JSON.stringify(APP)); } catch (e) { toast('Memoria del navegador llena: descarga una copia de seguridad', 'bad'); } }
 window.addEventListener('pagehide', function () { doSave(); });
 document.addEventListener('visibilitychange', function () { if (document.hidden) doSave(); });
@@ -2000,7 +2003,21 @@ function fotoURL(id, sz) {
     return (PURL[key] = (sz === 't' && ref.t) ? ref.t : (ref.g || ref.t || ''));
   });
 }
-function hydrate(root) { $$('img[data-ph]', root).forEach(function (im) { var id = im.getAttribute('data-ph'); if (!id) return; fotoURL(id, im.getAttribute('data-sz') || 't').then(function (u) { if (u) im.src = u; }); }); }
+var _phIO = null;
+function hydrate(root) {
+  var imgs = $$('img[data-ph]', root);
+  if (!imgs.length) return;
+  function load(im) {
+    var id = im.getAttribute('data-ph'); if (!id) return;
+    im.removeAttribute('data-ph');
+    fotoURL(id, im.getAttribute('data-sz') || 't').then(function (u) { if (u && im.isConnected) im.src = u; });
+  }
+  if (!('IntersectionObserver' in window)) { imgs.forEach(load); return; }
+  if (!_phIO) _phIO = new IntersectionObserver(function (es) {
+    es.forEach(function (e) { if (e.isIntersecting) { _phIO.unobserve(e.target); load(e.target); } });
+  }, { root: null, rootMargin: '160px', threshold: 0.01 });
+  imgs.forEach(function (im) { _phIO.observe(im); });
+}
 function phImg(id, sz) { return id ? raw('<img data-ph="' + esc(id) + '" data-sz="' + (sz || 't') + '" alt="">') : raw(''); }
 
 var CAL = { minima: { g: 540, gq: .5, t: 240, tq: .5 }, ahorro: { g: 720, gq: .6, t: 300, tq: .58 }, media: { g: 960, gq: .72, t: 360, tq: .66 }, alta: { g: 1600, gq: .86, t: 480, tq: .74 }, maxima: { g: 2000, gq: .92, t: 560, tq: .8 }, extrema: { g: 3000, gq: .95, t: 600, tq: .84 }, original: { g: 99999, gq: .97, t: 560, tq: .8 } };
@@ -2606,14 +2623,14 @@ ACT.publicar = async function () {
   var st = ST(), bad = puedePublicar(st);
   if (bad) { toast(bad, 'bad', 4500); if (!hayNube() || !logged()) go('/conexion'); return; }
   var done = busy('Publicando…');
-  try { var r = await publicar(st); done(); toast('Catálogo publicado ✓'); refresh(); }
+  try { var r = await publicar(st); done(); var nd = st.prods.filter(esDisp).length, na = st.prods.filter(function (p) { return p.nombre && p.vis !== false && !esDisp(p); }).length; toast('Catálogo publicado ✓ · ' + nd + ' disponibles' + (na ? (st.ocAg ? ' (' + na + ' agotados ocultos)' : ' · ' + na + ' agotados marcados') : ''), '', 5000); refresh(); }
   catch (e) { done(); await aviso('No se pudo publicar', e.message + ' Tus cambios siguen guardados en el teléfono.'); }
 };
 
 /* ---------------- Productos ---------------- */
 /* llegó (o volvió a tener cantidad) en la última lectura del servidor que trajo novedades, y hoy tiene cantidad */
 function esLlegado(st, p) { var sd = stockDe(p); return !!(st.srvLote && p.llego === st.srvLote && p.disp !== false && !(sd !== null && sd <= 0)); }
-function filtroProd() { var f = APP.ui.pf = APP.ui.pf || { q: '', f: 'publicados', cat: '', n: 60 }; return f; }
+function filtroProd() { var f = APP.ui.pf = APP.ui.pf || { q: '', f: 'publicados', cat: '', n: 40 }; return f; }
 function listaProductos(st) {
   var f = filtroProd(), toks = norm(f.q).split(' ').filter(Boolean);
   return st.prods.filter(function (p) {
@@ -2622,7 +2639,7 @@ function listaProductos(st) {
     if (f.f === 'publicados' && p.vis === false) return false;
     if (f.f === 'ocultos' && p.vis !== false) return false;
     if (f.f === 'agotados' && !(!p.disp || (s !== null && s <= 0))) return false;
-    if (f.f === 'disponibles' && (!p.disp || (s !== null && s <= 0))) return false;
+    if (f.f === 'disponibles' && !esDisp(p)) return false;
     if (f.f === 'llegaron' && !esLlegado(st, p)) return false;
     if (f.f === 'llegaronsf' && !(esLlegado(st, p) && !p.fotos.length && !p.fotoWeb)) return false;
     if (f.f === 'destacados' && !p.dest) return false;
@@ -2657,7 +2674,16 @@ function filaProducto(st, p, idx, reorden, total) {
 function renderListaProductos() {
   var st = ST(), f = filtroProd(), L = listaProductos(st), shown = L.slice(0, f.n);
   var reorden = !f.q && f.f === 'todos' && !f.cat;
-  var h = shown.map(function (p) { return filaProducto(st, p, st.prods.indexOf(p), reorden, st.prods.length).s; }).join('');
+  var idxMap = null;
+  if (reorden) {
+    idxMap = {};
+    for (var i = 0; i < st.prods.length; i++) idxMap[st.prods[i].id] = i;
+  }
+  var h = '';
+  for (var j = 0; j < shown.length; j++) {
+    var p = shown[j], idx = reorden ? (idxMap[p.id] || 0) : j;
+    h += filaProducto(st, p, idx, reorden, st.prods.length).s;
+  }
   if (!L.length) h = '<div class="tc" style="padding:34px 16px"><p class="bold">' + (st.prods.length ? 'Nada coincide con el filtro' : 'Aún no hay productos') + '</p><p class="help">' + (st.prods.length ? '' : 'Toma una foto, ponle precio y publícalo.') + '</p>' + (st.prods.length ? '' : (hayNube() ? '<button class="btn pri" data-act="gh-import">Traer los productos publicados del sitio</button>' : '<a class="btn pri" href="#/productos/nuevo">Crear el primero</a>')) + '</div>';
   var el = $('#plist'); if (!el) return;
   el.innerHTML = h + (L.length > shown.length ? '<button class="btn blk" style="border:0;border-top:1px solid var(--line);border-radius:0" data-act="p-more">Ver más (' + (L.length - shown.length) + ')</button>' : '');
@@ -2665,8 +2691,15 @@ function renderListaProductos() {
   var c = $('#pcount'); if (c) c.textContent = L.length + ' de ' + st.prods.length + (reorden ? ' · usa las flechas para ordenar' : '');
 }
 route(/^\/productos$/, function () {
-  var st = ST(), f = filtroProd(), cnt = function (fn) { return st.prods.filter(fn).length; };
-  var CN = { publicados: cnt(function (p) { return p.vis !== false; }), ocultos: cnt(function (p) { return p.vis === false; }), disponibles: cnt(function (p) { var sd = stockDe(p); return !(!p.disp || (sd !== null && sd <= 0)); }), llegaron: cnt(function (p) { return esLlegado(st, p); }), llegaronsf: cnt(function (p) { return esLlegado(st, p) && !p.fotos.length && !p.fotoWeb; }) };
+  var st = ST(), f = filtroProd();
+  /* Un solo pase por productos (antes: 5 filtros completos) */
+  var CN = { publicados: 0, ocultos: 0, disponibles: 0, llegaron: 0, llegaronsf: 0 };
+  for (var _i = 0; _i < st.prods.length; _i++) {
+    var _p = st.prods[_i], _s = stockDe(_p), _vis = _p.vis !== false, _lleg = esLlegado(st, _p);
+    if (_vis) CN.publicados++; else CN.ocultos++;
+    if (esDisp(_p)) CN.disponibles++;
+    if (_lleg) { CN.llegaron++; if (!_p.fotos.length && !_p.fotoWeb) CN.llegaronsf++; }
+  }
   var chips = [['todos', 'Todos'], ['publicados', 'Publicados'], ['disponibles', 'Disponibles'], ['llegaron', 'Llegaron'], ['llegaronsf', 'Llegaron sin foto'], ['ocultos', 'Ocultos'], ['agotados', 'Agotados'], ['bajo', 'Poco stock'], ['destacados', 'Destacados'], ['oferta', 'Ofertas'], ['sinfoto', 'Sin foto']];
   var body = html`<div class="pg stack" style="padding-bottom:12px">
     <div class="hz"><div class="sp" style="position:relative"><input class="in" id="p-q" type="search" placeholder="Buscar producto" value="${f.q}" style="border-radius:99px;padding-left:40px"><span style="position:absolute;left:12px;top:12px;color:var(--mut)">${ic('search', 20)}</span></div></div>
@@ -2680,13 +2713,20 @@ route(/^\/productos$/, function () {
     actions: raw('<button class="ib" data-act="p-menu" aria-label="Más opciones">' + ic('more', 24, 3).s + '</button>'),
     after: function () {
       renderListaProductos();
-      $('#p-q').addEventListener('input', function (e) { f.q = e.target.value; f.n = 60; renderListaProductos(); save(); });
-      var pc = $('#p-cat'); if (pc) pc.addEventListener('change', function (e) { f.cat = e.target.value; f.n = 60; renderListaProductos(); save(); });
+      (function () {
+        var tBusca = null;
+        $('#p-q').addEventListener('input', function (e) {
+          f.q = e.target.value; f.n = 40;
+          clearTimeout(tBusca);
+          tBusca = setTimeout(function () { renderListaProductos(); }, 180);
+        });
+      })();
+      var pc = $('#p-cat'); if (pc) pc.addEventListener('change', function (e) { f.cat = e.target.value; f.n = 40; renderListaProductos(); });
     }
   };
 });
 ACT['p-filtro'] = function (el) { var f = filtroProd(); f.f = el.getAttribute('data-v'); f.n = 60; save(); refresh(); };
-ACT['p-more'] = function () { filtroProd().n += 60; renderListaProductos(); };
+ACT['p-more'] = function () { filtroProd().n += 40; renderListaProductos(); };
 ACT['p-vis'] = function (el) { var p = prodById(ST(), el.getAttribute('data-id')); p.vis = el.checked; p.u = Date.now(); touch(); toast(el.checked ? p.nombre + ' ya se ve en tu catálogo' : p.nombre + ' quedó oculto'); };
 function moverProd(id, d) { var st = ST(), i = st.prods.findIndex(function (p) { return p.id === id; }), j = i + d; if (i < 0 || j < 0 || j >= st.prods.length) return; var t = st.prods[i]; st.prods[i] = st.prods[j]; st.prods[j] = t; touch(st); renderListaProductos(); }
 ACT['p-up'] = function (el) { moverProd(el.getAttribute('data-id'), -1); };
@@ -2730,7 +2770,7 @@ function bulkBuscarProductos(q) {
   for (var i = 0; i < list.length; i++) {
     var p = list[i];
     if (!p.nombre) continue;
-    if (APP.ui.bulkDisp) { var sdp = stockDe(p); if (!p.disp || (sdp !== null && sdp <= 0)) continue; }
+    if (APP.ui.bulkDisp && !esDisp(p)) continue;
     var pn = norm(p.nombre), sk = norm(p.sku || '');
     var score = 9999;
     if (pn === qn || sk === qn) score = 0;
@@ -3295,15 +3335,10 @@ function wrapText(cx, text, maxW, maxLines) {
   if (lines.length > maxLines) { lines = lines.slice(0, maxLines); var l = lines[maxLines - 1]; while (l.length > 1 && cx.measureText(l + '…').width > maxW) l = l.slice(0, -1); lines[maxLines - 1] = l + '…'; }
   return lines;
 }
-/* preferMini: true → usa miniatura (más rápido y liviano, ideal para anuncios «Rápida») */
-async function bitmapFoto(id, preferMini) {
+async function bitmapFoto(id) {
   try {
-    var rec = await fotoGet(id);
-    if (rec) {
-      var b = preferMini ? (rec.t || rec.g) : (rec.g || rec.t);
-      if (b) return await decodeImg(b);
-    }
-    var u = await fotoURL(id, preferMini ? 't' : 'g'); if (!u) return null;
+    var rec = await fotoGet(id); if (rec && rec.g) return await decodeImg(rec.g);
+    var u = await fotoURL(id, 'g'); if (!u) return null;
     if (u.indexOf('data:') === 0) { var r0 = await fetch(u); return await decodeImg(await r0.blob()); }
     var r = await fetchT(u, { mode: 'cors' }, 20000); return await decodeImg(await r.blob());
   } catch (e) { return null; }
@@ -3337,9 +3372,9 @@ async function anuncioCanvas(st, prods, fmt) {
     var p = prods[i], r = Math.floor(i / cols), c = i % cols, rowN = (r === rows - 1) ? (n - r * cols) : cols;
     var offX = (cols - rowN) * (cw + gap) / 2, x = gx + c * (cw + gap) + offX, y = top + r * (ch + gap);
     cx.save(); rrect(cx, x, y, cw, ch, 26); cx.fillStyle = '#fff'; cx.fill(); cx.clip();
-    var th = Math.round(ch * .62), im = p.fotos[0] ? await bitmapFoto(p.fotos[0], window.__adPreferMini) : null;
+    var th = Math.round(ch * .62), im = p.fotos[0] ? await bitmapFoto(p.fotos[0]) : null;
     cx.fillStyle = '#e8eef0'; cx.fillRect(x, y, cw, th);
-    if (im) { var k = Math.max(cw / im.width, th / im.height), sw = cw / k, sh = th / k; cx.drawImage(im, (im.width - sw) / 2, (im.height - sh) / 2, sw, sh, x, y, cw, th); if (im.close) try { im.close(); } catch (e0) { } }
+    if (im) { var k = Math.max(cw / im.width, th / im.height), sw = cw / k, sh = th / k; cx.drawImage(im, (im.width - sw) / 2, (im.height - sh) / 2, sw, sh, x, y, cw, th); }
     else { cx.fillStyle = col; cx.globalAlpha = .35; cx.font = '800 64px ' + F; cx.textAlign = 'center'; cx.textBaseline = 'middle'; cx.fillText(iniciales(p.nombre), x + cw / 2, y + th / 2); cx.globalAlpha = 1; }
     var pa = precioAnuncio(st, p);
     if (pa.old) { cx.fillStyle = '#e11d48'; rrect(cx, x + 14, y + 14, 112, 42, 21); cx.fill(); cx.fillStyle = '#fff'; cx.font = '800 24px ' + F; cx.textAlign = 'center'; cx.textBaseline = 'middle'; cx.fillText('OFERTA', x + 70, y + 36); }
@@ -3377,9 +3412,9 @@ async function anuncioHoja(st, prods, hn, tot) {
     var p = prods[i], r = Math.floor(i / cols), c = i % cols, rowN = (r === rows - 1) ? (n - r * cols) : cols;
     var offX = (cols - rowN) * (cw + gap) / 2, x = gx + c * (cw + gap) + offX, y = top + r * (ch + gap);
     cx.save(); rrect(cx, x, y, cw, ch, 26); cx.fillStyle = '#fff'; cx.fill(); cx.clip();
-    var th = Math.round(ch * .62), im = p.fotos[0] ? await bitmapFoto(p.fotos[0], window.__adPreferMini) : null;
+    var th = Math.round(ch * .62), im = p.fotos[0] ? await bitmapFoto(p.fotos[0]) : null;
     cx.fillStyle = '#e8eef0'; cx.fillRect(x, y, cw, th);
-    if (im) { var k = Math.max(cw / im.width, th / im.height), sw = cw / k, sh = th / k; cx.drawImage(im, (im.width - sw) / 2, (im.height - sh) / 2, sw, sh, x, y, cw, th); if (im.close) try { im.close(); } catch (e0) { } }
+    if (im) { var k = Math.max(cw / im.width, th / im.height), sw = cw / k, sh = th / k; cx.drawImage(im, (im.width - sw) / 2, (im.height - sh) / 2, sw, sh, x, y, cw, th); if (im.close) im.close(); }
     else { cx.fillStyle = col; cx.globalAlpha = .35; cx.font = '800 64px ' + F; cx.textAlign = 'center'; cx.textBaseline = 'middle'; cx.fillText(iniciales(p.nombre), x + cw / 2, y + th / 2); cx.globalAlpha = 1; }
     var pa = precioAnuncio(st, p);
     if (pa.old) { cx.fillStyle = '#e11d48'; rrect(cx, x + 14, y + 14, 112, 42, 21); cx.fill(); cx.fillStyle = '#fff'; cx.font = '800 24px ' + F; cx.textAlign = 'center'; cx.textBaseline = 'middle'; cx.fillText('OFERTA', x + 70, y + 36); }
@@ -3488,7 +3523,7 @@ function adContacto(cx, st, x, y, maxW, size, color, una) {
 async function anuncioTarjeta(st, p, estilo, fmt) {
   var W = 1080, H = fmt === 'v' ? 1920 : 1080, big = fmt === 'v', cv = document.createElement('canvas'); cv.width = W; cv.height = H;
   var cx = cv.getContext('2d'), col = st.color || '#0a7c86', acento = mezclar(col, .55, '#fff'), pad = 64, d = precioDatos(st, p);
-  var logo = st.logo ? await bitmapFoto(st.logo) : null, ims = []; for (var i = 0; i < Math.min(3, p.fotos.length); i++) { var b = await bitmapFoto(p.fotos[i], window.__adPreferMini); if (b) ims.push(b); }
+  var logo = st.logo ? await bitmapFoto(st.logo) : null, ims = []; for (var i = 0; i < Math.min(3, p.fotos.length); i++) { var b = await bitmapFoto(p.fotos[i]); if (b) ims.push(b); }
   var cat = catName(st, p.cat), marca = (st.nombre || '').toUpperCase() + ' ' + new Date().toLocaleDateString('es');
   var url = catalogURL(st) || ('https://wa.me/' + waNumero(st.wa));
   cx.textBaseline = 'alphabetic';
@@ -3564,7 +3599,7 @@ async function anuncioTarjeta(st, p, estilo, fmt) {
 /* ---------------- pantalla Compartir ---------------- */
 route(/^\/compartir$/, function () {
   var st = ST(), url = catalogURL(st), fmt = APP.ui.adFmt || 'c', est = APP.ui.adEst || 'grid';
-  var conFoto = st.prods.filter(function (p) { var sk = stockDe(p); return p.vis !== false && p.nombre && p.disp !== false && !(sk !== null && sk <= 0) && p.fotos && p.fotos.length; });
+  var nDisp = st.prods.filter(esDisp).length, conFoto = st.prods.filter(function (p) { return esDisp(p) && p.fotos && p.fotos.length; });
   var adQ = (APP.ui.adQ || '').trim();
   var conFotoVista = adQ ? conFoto.filter(function (p) { return norm(p.nombre).indexOf(norm(adQ)) >= 0 || norm(p.sku || '').indexOf(norm(adQ)) >= 0; }) : conFoto;
   var adPrimera = APP.ui.adSel === undefined;
@@ -3575,11 +3610,9 @@ route(/^\/compartir$/, function () {
       ${st.pubAt ? '' : html`<div class="banner warn" style="margin-top:10px">Aún no has publicado el catálogo: el enlace funcionará cuando lo publiques.</div>`}
       <div class="wr" style="margin-top:10px"><button class="btn pri sm" data-act="sh-link">${ic('share', 16)}Compartir enlace</button><button class="btn sm" data-act="sh-copy">${ic('copy', 16)}Copiar</button><button class="btn wa sm" data-act="sh-wa">${ic('chat', 16)}WhatsApp</button><a class="btn sm" target="_blank" rel="noopener" href="${url}">Abrir</a></div>` : html`<div class="banner info">Para tener un enlace, indica dónde publicas tu catálogo en <a href="#/conexion">Cuenta y conexión</a> («Dirección pública del catálogo»). Mientras tanto puedes compartir el catálogo como archivo (más abajo).</div>`}</div>
     ${url ? html`<div class="card tc"><h2>Código QR</h2><div class="qrbox" id="qr-box"></div><div class="wr" style="justify-content:center;margin-top:10px"><button class="btn sm" data-act="qr-dl">${ic('download', 16)}Descargar QR</button></div></div>` : ''}
-    <div class="card"><h2>Imagen para estados de WhatsApp</h2><p class="help" style="margin:0 0 10px">Tus productos con foto y precio y el QR de tu catálogo, listos para publicar.</p>
+    <div class="card"><h2>Imagen para estados de WhatsApp</h2><p class="help" style="margin:0 0 10px">Tus productos con foto y precio y el QR de tu catálogo, listos para publicar. ${nDisp} disponibles · ${conFoto.length} con foto (solo se pueden elegir los que tienen foto).</p>
       <div class="fl" style="margin-bottom:8px"><button class="${fmt === 'c' ? 'on' : ''}" data-act="ad-fmt" data-v="c">Cuadrada</button><button class="${fmt === 'v' ? 'on' : ''}" data-act="ad-fmt" data-v="v">Vertical (estado)</button></div>
       <div class="fl" style="margin-bottom:8px">${AD_ESTILOS.map(function (e) { return html`<button class="${est === e[0] ? 'on' : ''}" data-act="ad-est" data-v="${e[0]}">${e[1]}</button>`; })}</div>
-      <div class="fl" style="margin-bottom:8px"><button class="${(APP.ui.adCal || 'normal') === 'rapida' ? 'on' : ''}" data-act="ad-cal" data-v="rapida">Rápida</button><button class="${(APP.ui.adCal || 'normal') === 'normal' ? 'on' : ''}" data-act="ad-cal" data-v="normal">Normal</button><button class="${(APP.ui.adCal || 'normal') === 'alta' ? 'on' : ''}" data-act="ad-cal" data-v="alta">Alta calidad</button></div>
-      <p class="help" style="margin:0 0 8px">«Rápida» usa miniaturas y comprime más (más ligera y veloz). «Alta calidad» prioriza nitidez.</p>
       <div class="help" style="margin-bottom:6px">${est === 'grid' ? html`1. Elige productos (<b id="ad-n">${sel.length}</b> elegidos) · hasta 6 en una imagen; si eliges más, se reparten en hojas grandes de 18` : html`1. Elige hasta 6 productos (<b id="ad-n">${sel.length}</b> elegidos) · se crea una imagen por producto`}</div>
       <div class="hz" style="margin-bottom:8px;gap:8px"><div class="sp" style="position:relative"><input class="in" id="ad-q" type="search" placeholder="Buscar producto…" value="${adQ}" style="border-radius:12px;padding-left:38px;min-height:42px"><span style="position:absolute;left:12px;top:11px;color:var(--mut)">${ic('search', 18)}</span></div>
         <button class="btn sm" data-act="ad-clear" ${sel.length ? '' : raw('disabled')} style="flex:0 0 auto">Quitar selección</button></div>
@@ -3627,58 +3660,25 @@ ACT['ad-pick'] = function (el) {
 };
 ACT['ad-make'] = async function () {
   var st = ST(), prods = (APP.ui.adSel || []).map(function (id) { return prodById(st, id); }).filter(Boolean), est = APP.ui.adEst || 'grid', fmt = APP.ui.adFmt || 'c';
-  var cal = APP.ui.adCal || 'normal'; /* rapida | normal | alta */
-  var jpgQ = cal === 'rapida' ? 0.78 : (cal === 'alta' ? 0.92 : 0.88);
-  window.__adPreferMini = cal === 'rapida';
-  window.__adCancel = false;
-  var done = busy(cal === 'rapida' ? 'Diseñando (rápido)…' : 'Diseñando la imagen…'), out = $('#ad-out');
-  /* Botón cancelar sobre el busy */
-  try {
-    var busyEl = document.getElementById('busy');
-    if (busyEl && !document.getElementById('ad-cancel-btn')) {
-      var cb = document.createElement('button');
-      cb.id = 'ad-cancel-btn'; cb.className = 'btn sm'; cb.style.cssText = 'margin-top:14px';
-      cb.textContent = 'Cancelar'; cb.onclick = function () { window.__adCancel = true; };
-      busyEl.appendChild(cb);
-    }
-  } catch (eC) { }
+  var done = busy('Diseñando la imagen…'), out = $('#ad-out');
   try {
     var blobs = [];
     if (est === 'grid' && prods.length > 6) {
       var HOJA = 18, nh = Math.ceil(prods.length / HOJA);
       for (var h = 0; h < nh; h++) {
-        if (window.__adCancel) throw new Error('cancelado');
         setBusyText('Diseñando hoja ' + (h + 1) + ' de ' + nh + '…');
-        var chj = await anuncioHoja(st, prods.slice(h * HOJA, (h + 1) * HOJA), h + 1, nh), bh = await toBlob(chj, 'image/jpeg', jpgQ);
+        var chj = await anuncioHoja(st, prods.slice(h * HOJA, (h + 1) * HOJA), h + 1, nh), bh = await toBlob(chj, 'image/jpeg', .88);
         chj.width = 1; chj.height = 1; if (bh) blobs.push(bh);
         await new Promise(function (r) { setTimeout(r, 0); });
       }
     }
-    else if (est === 'grid') {
-      if (window.__adCancel) throw new Error('cancelado');
-      var cv = await anuncioCanvas(st, prods, fmt), b0 = await toBlob(cv, 'image/jpeg', jpgQ); if (b0) blobs.push(b0); cv.width = 1; cv.height = 1;
-    }
-    else for (var i = 0; i < prods.length; i++) {
-      if (window.__adCancel) throw new Error('cancelado');
-      setBusyText('Diseñando ' + (i + 1) + ' de ' + prods.length + '…');
-      var c2 = await anuncioTarjeta(st, prods[i], est, fmt), b2 = await toBlob(c2, 'image/jpeg', jpgQ);
-      if (b2) blobs.push(b2); c2.width = 1; c2.height = 1;
-      await new Promise(function (r) { setTimeout(r, 0); });
-    }
+    else if (est === 'grid') { var cv = await anuncioCanvas(st, prods, fmt), b0 = await toBlob(cv, 'image/jpeg', .9); if (b0) blobs.push(b0); }
+    else for (var i = 0; i < prods.length; i++) { setBusyText('Diseñando ' + (i + 1) + ' de ' + prods.length + '…'); var c2 = await anuncioTarjeta(st, prods[i], est, fmt), b2 = await toBlob(c2, 'image/jpeg', .9); if (b2) blobs.push(b2); }
     done();
-    window.__adPreferMini = false;
-    try { var bx = document.getElementById('ad-cancel-btn'); if (bx) bx.remove(); } catch (eR) { }
     if (!blobs.length) throw new Error('No se pudo crear la imagen'); window._adL = blobs; window._ad = blobs[0];
     out.innerHTML = (blobs.length > 1 ? '<div class="wr" style="justify-content:center;margin-bottom:14px"><button class="btn pri sm" data-act="ad-share-all">' + ic('share', 16).s + 'Compartir / guardar las ' + blobs.length + ' juntas</button><button class="btn sm" data-act="ad-zip">' + ic('download', 16).s + 'Todas en un ZIP</button></div>' : '') + blobs.map(function (b, i) { return '<div style="margin-bottom:14px"><img class="pv" style="max-height:420px" src="' + URL.createObjectURL(b) + '" alt="Vista previa"><div class="wr" style="justify-content:center;margin-top:10px"><button class="btn pri sm" data-act="ad-share" data-i="' + i + '">' + ic('share', 16).s + 'Compartir / guardar</button></div></div>'; }).join('') + '<p class="help">Revisa los precios y textos antes de publicarla.</p>';
-  } catch (e) {
-    window.__adPreferMini = false;
-    try { var bx2 = document.getElementById('ad-cancel-btn'); if (bx2) bx2.remove(); } catch (eR2) { }
-    done();
-    if (String(e.message || e) === 'cancelado') toast('Generación cancelada');
-    else toast(e.message, 'bad');
-  }
+  } catch (e) { done(); toast(e.message, 'bad'); }
 };
-ACT['ad-cal'] = function (el) { APP.ui.adCal = el.getAttribute('data-v'); save(); refresh(); };
 ACT['ad-share-all'] = async function () {
   var bl = window._adL || []; if (!bl.length) return;
   var done = busy('Preparando ' + bl.length + ' imágenes…');
@@ -3990,6 +3990,18 @@ function parseCSV(txt) {
 }
 var CAMPOS = [['nombre', 'Nombre', /^(nombre|producto|articulo|artículo|name|descripcion corta|item)/], ['sku', 'SKU / código', /^(sku|codigo|código|code|referencia|ref)/], ['precio', 'Precio', /^(precio|price|pvp|valor|venta)/], ['cat', 'Categoría', /^(categor|rubro|tipo|familia|category)/], ['desc', 'Descripción', /^(descrip|detalle|notas?)/], ['st', 'Existencias', /^(stock|existenc|cantidad|inventario|qty|cant)/], ['unidad', 'Unidad', /^(unidad|u\/m|um|medida|unit)/], ['costo', 'Costo', /^(costo|coste|cost|compra)/], ['moneda', 'Moneda', /^(moneda|divisa|currency)/]];
 var IMP = null;
+/* Reconoce las columnas por su título exacto (también el Excel de AxisPOS: Name, Code, Retail Price, Available Quantity, Group Name) y, si no, por el comienzo */
+var COLEXACTA = { nombre: ['name', 'nombre', 'producto', 'articulo', 'item', 'descripcion corta'], sku: ['code', 'codigo', 'sku', 'referencia', 'ref'], precio: ['retail price', 'precio', 'precio venta', 'precio de venta', 'price', 'pvp'], cat: ['group name', 'categoria', 'category', 'grupo', 'familia', 'rubro'], desc: ['description', 'descripcion', 'detalle', 'notas'], st: ['available quantity', 'existencias', 'existencia', 'stock', 'cantidad', 'inventario', 'qty', 'quantity'], unidad: ['measuring unit', 'unidad', 'u/m', 'um', 'unit', 'medida'], costo: ['purchase price', 'costo', 'coste', 'cost', 'precio de compra'], moneda: ['moneda', 'divisa', 'currency'] };
+var COLNO = /^(item type|price group|minimal|nominal|name 2|barcode|catalog|measuring unit (2|ratio)|vat|wholesale)/;
+function autoMapa(heads) {
+  var map = {}, usado = {};
+  var usa = function (k, i) { map[k] = i; usado[i] = 1; };
+  CAMPOS.forEach(function (c) { var k = c[0], ex = COLEXACTA[k] || []; for (var j = 0; j < ex.length; j++) { var i = heads.indexOf(ex[j]); if (i >= 0 && !usado[i]) { usa(k, i); return; } } });
+  CAMPOS.forEach(function (c) { var k = c[0]; if (map[k] !== undefined) return; for (var i = 0; i < heads.length; i++) if (!usado[i] && !COLNO.test(heads[i]) && c[2].test(heads[i])) { usa(k, i); return; } });
+  return map;
+}
+/* «|Herramientas y construcción|Herramientas manuales» → «Herramientas manuales»; el grupo genérico de servicio no es una categoría */
+function limpiaCat(t) { var a = String(t || '').split('|').map(function (x) { return x.trim(); }).filter(Boolean), r = a.length ? a[a.length - 1] : ''; return norm(r) === 'grupo de servicio' ? '' : r; }
 route(/^\/excel$/, function () {
   var st = ST();
   var body = html`<div class="pg stack">
@@ -4007,7 +4019,7 @@ ACT['imp-file'] = async function () {
   rows = rows.filter(function (r) { return r.some(function (x) { return String(x).trim() !== ''; }); });
   if (rows.length < 2) { toast('El archivo no tiene datos', 'bad'); return; }
   var head = rows[0].map(function (h) { return norm(h); }), map = {};
-  CAMPOS.forEach(function (c) { for (var i = 0; i < head.length; i++) if (c[2].test(head[i]) && Object.keys(map).every(function (k) { return map[k] !== i; })) { map[c[0]] = i; break; } });
+  map = autoMapa(head);
   IMP = { rows: rows, map: map, upd: true };
   pintarImport();
 };
@@ -4027,8 +4039,6 @@ function pedirFotosCopia(conFoto, total) {
       MODAL.res = res;
       modal(html`<h2>Calidad de las fotos</h2><div class="card flat">
         <a class="li tap" data-act="m-pick" data-v="original" style="min-height:58px"><div class="tx"><b>Original (recomendado)</b><span>Tal como se ven en el catálogo, sin recomprimir. Pesan más.</span></div></a>
-        <a class="li tap" data-act="m-pick" data-v="alta" style="min-height:58px"><div class="tx"><b>Alta (~1600 px)</b><span>Casi original, más manejable en el teléfono.</span></div></a>
-        <a class="li tap" data-act="m-pick" data-v="media" style="min-height:58px"><div class="tx"><b>Media (~1000 px)</b><span>Buen equilibrio tamaño / nitidez.</span></div></a>
         <a class="li tap" data-act="m-pick" data-v="ajustes" style="min-height:58px"><div class="tx"><b>La de Ajustes (${NM[cur] || cur})</b><span>Se reducen y comprimen según ese ajuste.</span></div></a></div>`);
     }).then(function (cal) { return cal ? { modo: modo, cal: cal } : null; });
   });
@@ -4043,11 +4053,7 @@ async function importarFotosCopia(f) {
     done(); done = function () { };
     var opc = await pedirFotosCopia(st.prods.filter(function (p) { return p.fotos.length; }).length, st.prods.length);
     if (!opc) return;
-    var reemplazar = opc.modo === 'todas';
-    if (opc.cal === 'original') APP.cfg.calidad = 'original';
-    else if (opc.cal === 'alta') APP.cfg.calidad = 'alta';
-    else if (opc.cal === 'media') APP.cfg.calidad = 'media';
-    /* «ajustes» deja APP.cfg.calidad como está */
+    var reemplazar = opc.modo === 'todas'; if (opc.cal === 'original') APP.cfg.calidad = 'original';
     done = busy('Importando fotos…');
     var bySku = {}, byNom = {}; st.prods.forEach(function (p) { if (p.sku) bySku[skuKey(p.sku)] = p; byNom[norm(p.nombre)] = p; });
     var ok = 0, fotos = 0, porNombre = 0, yaTenia = 0, sinFoto = 0, sinMatch = [], i, k;
@@ -4093,17 +4099,20 @@ ACT['imp-map'] = function (el) { IMP.map[el.getAttribute('data-k')] = el.value =
 ACT['imp-go'] = function () {
   var st = ST(), m = IMP.map; if (m.nombre === undefined) { toast('Elige la columna del nombre', 'bad'); return; }
   IMP.upd = $('#imp-upd').checked; var add = 0, upd = 0, skip = 0, cats = {}; st.cats.forEach(function (c) { cats[norm(c.n)] = c.id; });
-  var idx = {}, sidx = {}; st.prods.forEach(function (p) { idx[norm(p.nombre)] = p; if (p.sku) sidx[skuKey(p.sku)] = p; });
+  var idx = {}, sidx = {}, enArchivo = {}; st.cats.forEach(function (c) { var lc = limpiaCat(c.n); if (lc && lc !== c.n && !cats[norm(lc)]) cats[norm(lc)] = c.id; }); st.prods.forEach(function (p) { idx[norm(p.nombre)] = p; if (p.sku) sidx[skuKey(p.sku)] = p; });
   var g = function (r, k) { return m[k] === undefined ? '' : String(r[m[k]] == null ? '' : r[m[k]]).trim(); };
   IMP.rows.slice(1).forEach(function (r) {
     var nombre = g(r, 'nombre'); if (!nombre) { skip++; return; }
-    var cn = g(r, 'cat'), cid = ''; if (cn) { cid = cats[norm(cn)]; if (!cid) { cid = uid(); cats[norm(cn)] = cid; st.cats.push({ id: cid, n: cn }); } }
+    var cn = limpiaCat(g(r, 'cat')), cid = ''; if (cn) { cid = cats[norm(cn)]; if (!cid) { cid = uid(); cats[norm(cn)] = cid; st.cats.push({ id: cid, n: cn }); } }
     var mon = g(r, 'moneda').toUpperCase(), sk = g(r, 'sku'), ex = (sk && sidx[skuKey(sk)]) || idx[norm(nombre)];
     var vals = { sku: sk, precio: g(r, 'precio') === '' ? '' : num(g(r, 'precio')), desc: g(r, 'desc'), unidad: g(r, 'unidad'), st: g(r, 'st') === '' ? '' : Math.max(0, Math.round(num(g(r, 'st')))), costo: g(r, 'costo') === '' ? '' : num(g(r, 'costo')), moneda: MONEDAS.indexOf(mon) >= 0 && mon !== st.mp ? mon : '' };
-    if (ex) { if (!IMP.upd) { skip++; return; } Object.keys(vals).forEach(function (k) { if (m[k] !== undefined && vals[k] !== '') ex[k] = vals[k]; }); if (cid) ex.cat = cid; ex.u = Date.now(); upd++; }
-    else { var p = nuevoProducto(st); p.nombre = nombre; p.cat = cid; Object.keys(vals).forEach(function (k) { p[k] = vals[k]; }); st.prods.push(p); idx[norm(nombre)] = p; if (sk) sidx[skuKey(sk)] = p; add++; }
+    if (ex) { enArchivo[ex.id] = 1; if (!IMP.upd) { skip++; return; } Object.keys(vals).forEach(function (k) { if (m[k] !== undefined && vals[k] !== '') ex[k] = vals[k]; }); if (cid) ex.cat = cid; ex.u = Date.now(); upd++; }
+    else { var p = nuevoProducto(st); p.nombre = nombre; p.cat = cid; Object.keys(vals).forEach(function (k) { p[k] = vals[k]; }); st.prods.push(p); enArchivo[p.id] = 1; idx[norm(nombre)] = p; if (sk) sidx[skuKey(sk)] = p; add++; }
   });
-  touch(st); IMP = null; $('#imp-out').innerHTML = '<div class="banner info" style="margin-top:12px"><b>Listo.</b> ' + add + ' nuevos, ' + upd + ' actualizados' + (skip ? ', ' + skip + ' omitidos' : '') + '. Agrega fotos desde la lista de productos y publica.</div>';
+  /* Si el archivo trae existencias, un producto con SKU que ya no viene en él (se agotó y salió de la lista) pasa a agotado */
+  var aus = 0; if (m.st !== undefined && IMP.upd && (add + upd) >= 20) st.prods.forEach(function (p) { if (!enArchivo[p.id] && p.sku && p.st !== '' && p.st != null && num(p.st) > 0) { p.st = 0; p.u = Date.now(); aus++; } });
+  touch(st); IMP = null; var nd = st.prods.filter(esDisp).length;
+  $('#imp-out').innerHTML = '<div class="banner info" style="margin-top:12px"><b>Listo.</b> ' + add + ' nuevos, ' + upd + ' actualizados' + (skip ? ', ' + skip + ' omitidos' : '') + (aus ? ', ' + aus + ' pasaron a agotado por no venir en el archivo' : '') + '.<br>Ahora hay <b>' + nd + '</b> productos disponibles de ' + st.prods.length + '. Agrega fotos y publica.</div>';
   toast('Importación terminada');
 };
 ACT['exp-xlsx'] = async function (el) {
@@ -4123,15 +4132,8 @@ function idsBackup() {
   [st0.logo, st0.portada, st0.espec].forEach(function (x) { if (x && ids.indexOf(x) < 0) ids.push(x); });
   return ids;
 }
-/* nivel: 'mini' | 'media' (~1000px) | 'alta' (~1600px) | 'completa' (original, sin recomprimir).
+/* nivel: 'mini' = miniaturas (liviano) · 'completa' = foto grande + miniatura tal como están guardadas, sin recomprimir.
    parte {i, n}: solo las fotos de la tanda i (para copias grandes en varios archivos) */
-function sufijoCalidadBk(nivel, conFotos) {
-  if (!conFotos) return '-sin-fotos';
-  if (nivel === 'completa') return '';
-  if (nivel === 'alta') return '-alta';
-  if (nivel === 'media') return '-media';
-  return '-miniaturas';
-}
 async function crearBackup(conFotos, nivel, parte) {
   var Z = await jszip(), zip = new Z();
   var data = JSON.parse(JSON.stringify(APP));
@@ -4159,12 +4161,6 @@ async function crearBackup(conFotos, nivel, parte) {
         if (nivel === 'completa') {
           if (r.g) zip.file('fotos/' + r.id + '-g.bin', r.g);
           if (r.t && r.t !== r.g) zip.file('fotos/' + r.id + '-t.bin', r.t);
-        } else if (nivel === 'alta' || nivel === 'media') {
-          var src = r.g || r.t;
-          var mid = await fotoCatalogo(src, nivel === 'alta' ? 'normal' : 'buena');
-          if (mid) zip.file('fotos/' + r.id + '-g.bin', mid);
-          else if (r.t) zip.file('fotos/' + r.id + '-g.bin', r.t);
-          else if (r.g) zip.file('fotos/' + r.id + '-g.bin', r.g);
         } else {
           var blob = r.t || r.g;
           if (blob) zip.file('fotos/' + r.id + '-g.bin', blob);
@@ -4189,21 +4185,8 @@ function pedirCalidadBackup() {
   return new Promise(function (res) {
     MODAL.res = res;
     modal(html`<h2>Calidad de las fotos</h2><p class="help">${n} fotos en esta tienda.</p><div class="card flat">
-      <a class="li tap" data-act="m-pick" data-v="completa" style="min-height:58px"><div class="tx"><b>Original (máxima)</b><span>Las fotos tal como están guardadas, sin recomprimir. El archivo más pesado; ideal para archivo completo.</span></div></a>
-      <a class="li tap" data-act="m-pick" data-v="alta" style="min-height:58px"><div class="tx"><b>Alta calidad</b><span>Recomprime a ~1600 px. Casi original, más manejable.</span></div></a>
-      <a class="li tap" data-act="m-pick" data-v="media" style="min-height:58px"><div class="tx"><b>Calidad media (recomendada)</b><span>~1000 px. Buen equilibrio para WhatsApp, Drive o Telegram.</span></div></a>
-      <a class="li tap" data-act="m-pick" data-v="mini" style="min-height:58px"><div class="tx"><b>Miniaturas</b><span>Muy liviana y rápida. Las fotos quedan pequeñas al restaurar.</span></div></a></div>`);
-  });
-}
-/* Al restaurar fotos: calidad de destino (tal cual del zip, o bajar) */
-function pedirCalidadRestaurar(ab) {
-  return new Promise(function (res) {
-    MODAL.res = res;
-    var info = ab && ab.lado ? html`<p class="help">Las fotos de la copia llegan hasta ~${ab.lado} px.</p>` : '';
-    modal(html`<h2>Calidad al restaurar</h2>${info}<div class="card flat">
-      <a class="li tap" data-act="m-pick" data-v="talcual" style="min-height:58px"><div class="tx"><b>Tal como vienen (recomendado)</b><span>Sin recomprimir. Si ya tienes una foto mejor en el teléfono, se conserva.</span></div></a>
-      <a class="li tap" data-act="m-pick" data-v="media" style="min-height:58px"><div class="tx"><b>Bajar a media (~1000 px)</b><span>Ahorra espacio. Útil si la copia es muy pesada.</span></div></a>
-      <a class="li tap" data-act="m-pick" data-v="mini" style="min-height:58px"><div class="tx"><b>Solo miniaturas</b><span>La más liviana. Solo para ver el catálogo; no apta para publicar.</span></div></a></div>`);
+      <a class="li tap" data-act="m-pick" data-v="completa" style="min-height:58px"><div class="tx"><b>Alta calidad (recomendado)</b><span>Las fotos como están guardadas, sin recomprimir. Pesa más; si son muchas se divide en varios archivos.</span></div></a>
+      <a class="li tap" data-act="m-pick" data-v="mini" style="min-height:58px"><div class="tx"><b>Miniaturas</b><span>Muy liviana, pero las fotos quedan pequeñas al restaurar.</span></div></a></div>`);
   });
 }
 /* Abre la copia y cuenta lo que trae (tiendas, fotos y el tamaño de las fotos) */
@@ -4227,26 +4210,16 @@ function pedirModoRestaurar(ab) {
       <p class="help" style="margin-top:8px">Si el teléfono ya tiene una foto de mayor calidad que la de la copia, se conserva la mejor.</p>`);
   });
 }
-async function restaurarBackup(file, modo, ab, calRest) {
-  ab = ab || await abrirBackup(file); modo = modo || 'todo'; calRest = calRest || 'talcual';
+async function restaurarBackup(file, modo, ab) {
+  ab = ab || await abrirBackup(file); modo = modo || 'todo';
   var zip = ab.zip, j = ab.j, n = 0, mantenidas = 0, tot = ab.ids.length;
   if (modo !== 'datos') {
     for (var k = 0; k < tot; k++) {
       var id = ab.ids[k], g = zip.file('fotos/' + id + '-g.bin'), t = zip.file('fotos/' + id + '-t.bin');
       var gb = g ? new Blob([await g.async('arraybuffer')], { type: 'image/webp' }) : null, tb = t ? new Blob([await t.async('arraybuffer')], { type: 'image/webp' }) : gb;
-      /* Opcional: bajar calidad al restaurar */
-      if (calRest === 'media' && gb) {
-        try { gb = await fotoCatalogo(gb, 'buena') || gb; tb = gb; } catch (eM) { }
-      } else if (calRest === 'mini' && (gb || tb)) {
-        try {
-          var srcM = tb || gb;
-          var miniB = await fotoCatalogo(srcM, 'mini');
-          gb = miniB || srcM; tb = gb;
-        } catch (eMi) { }
-      }
       var ex = null; try { ex = await fotoGet(id); } catch (e0) { ex = null; }
-      /* Si el usuario eligió «tal cual», nunca bajar: se conserva la mejor del teléfono */
-      if (ex && calRest === 'talcual') {
+      /* nunca bajar la calidad: si el teléfono ya tiene una versión más pesada (más detalle), se conserva */
+      if (ex) {
         if (ex.g && ex.g.size && (!gb || ex.g.size >= gb.size)) { if (gb) mantenidas++; gb = ex.g; }
         if (ex.t && ex.t.size && (!tb || ex.t.size >= tb.size)) tb = ex.t;
       }
@@ -4287,17 +4260,13 @@ async function flujoRestaurar() {
     } catch (e0) { d0(); toast(e0.message || 'No se pudo restaurar', 'bad', 5000); return; }
   }
   var f = await elegirArchivo('.zip,application/zip,application/octet-stream'); if (!f) return;
-  var done = busy('Leyendo la copia…'), ab, modo, calRest = 'talcual';
+  var done = busy('Leyendo la copia…'), ab, modo;
   try { ab = await abrirBackup(f); done(); } catch (e) { done(); toast(e.message || 'No se pudo leer la copia', 'bad', 5000); return; }
   modo = ab.ids.length ? await pedirModoRestaurar(ab) : ((await confirmar('¿Restaurar esta copia?', 'Restaurar', false, 'Las tiendas de la copia reemplazan a las que tengan el mismo identificador. Esta copia no trae fotos.')) ? 'datos' : null);
   if (!modo) return;
-  if (modo !== 'datos' && ab.ids.length) {
-    calRest = await pedirCalidadRestaurar(ab);
-    if (!calRest) return;
-  }
   await guardar();
   done = busy('Restaurando…');
-  try { var r = await restaurarBackup(f, modo, ab, calRest); done(); toast(msgRestaurado(r), 'ok', 5000); go('/'); } catch (e3) { done(); toast(e3.message || 'No se pudo restaurar', 'bad', 5000); }
+  try { var r = await restaurarBackup(f, modo, ab); done(); toast(msgRestaurado(r), 'ok', 5000); go('/'); } catch (e3) { done(); toast(e3.message || 'No se pudo restaurar', 'bad', 5000); }
 }
 
 /* ---------------- Cuenta y conexión ---------------- */
@@ -4641,7 +4610,7 @@ publicar = async function (st, o) {
     if (st.espec && P(st.espec)) setPath(base, 'especialidades.foto', P(st.espec));
     if (APP.cfg.fb && APP.cfg.fb.url && st.slug) setPath(base, 'firebase', { url: String(APP.cfg.fb.url).replace(/\/+$/, ''), slug: st.slug });
     var oc = {}; (base.categorias || []).forEach(function (x) { oc[x.id] = x; });
-    base.categorias = st.cats.map(function (x) { return { id: x.id, nombre: x.n, icono: (oc[x.id] || {}).icono || 'caja' }; });
+    base.categorias = st.cats.map(function (x) { return { id: x.id, nombre: limpiaCat(x.n) || x.n, icono: (oc[x.id] || {}).icono || 'caja' }; });
     var op = {}; (base.productos || []).forEach(function (x) { op[x.id] = x; }); var top = {}; st.prods.filter(function (q) { return +q.vend >= 1; }).sort(function (a, b) { return b.vend - a.vend; }).slice(0, 24).forEach(function (q) { top[q.id] = 1; }); var hoy = ahoraHabana().fecha;
     base.productos = st.prods.filter(function (p) { return p.nombre; }).map(function (p, i) {
       var o0 = op[p.id] || {}, cur = monedaDe(st, p), stk = stockDe(p), ph = p.fotos.slice(0, 5).map(P).filter(Boolean);
@@ -4892,9 +4861,8 @@ async function crearBackupNativo(conFotos, nivel) {
   var ids = conFotos ? idsBackup() : [];
   setBusyText(conFotos ? ('Empaquetando ' + ids.length + ' foto(s) en nativo…') : 'Preparando copia nativa…');
   var st = ST();
-  var nom = 'catalogo-copia-' + ((st && st.slug) || 'tienda') + '-' + new Date().toISOString().slice(0, 10) + sufijoCalidadBk(nivel, conFotos) + '.zip';
-  /* El plugin nativo solo distingue completa vs mini; media/alta se hacen por JS */
-  if (nivel === 'media' || nivel === 'alta') throw new Error('media-via-js');
+  var nom = 'catalogo-copia-' + ((st && st.slug) || 'tienda') + '-' + new Date().toISOString().slice(0, 10) +
+    (conFotos ? (nivel === 'completa' ? '' : '-miniaturas') : '-sin-fotos') + '.zip';
   var r = await P.crear({
     datosJson: datosJson,
     fotoIds: ids,
@@ -4937,17 +4905,14 @@ ACT['bk-crear'] = async function (el) {
           refresh();
           return;
         } catch (ne) {
-          var msgN = (ne && ne.message) || String(ne);
-          if (msgN !== 'media-via-js') {
-            console.warn('[backup nativo]', ne);
-            toast('Nativo falló (' + msgN + '). Probando modo web…', 'bad', 3500);
-          }
+          console.warn('[backup nativo]', ne);
+          toast('Nativo falló (' + ((ne && ne.message) || ne) + '). Probando modo web…', 'bad', 3500);
           /* sigue al flujo JS de abajo */
         }
       }
       done = busy(conFotos ? 'Preparando la copia con fotos…' : 'Preparando la copia…');
       /* Un solo ZIP: el navegador bloquea descargas repetidas si se parten en varios archivos */
-      var base = 'catalogo-copia-' + ((st && st.slug) || 'tienda') + '-' + new Date().toISOString().slice(0, 10) + sufijoCalidadBk(nivel, conFotos), r = '';
+      var base = 'catalogo-copia-' + ((st && st.slug) || 'tienda') + '-' + new Date().toISOString().slice(0, 10) + (conFotos ? (nivel === 'completa' ? '' : '-miniaturas') : '-sin-fotos'), r = '';
       var totalFotos = 0, ultimoMb = 0;
       var blob = await crearBackup(conFotos, nivel, null), nom = base + '.zip';
       totalFotos += (blob._fotosOk || 0);
@@ -4984,7 +4949,7 @@ ACT['bk-crear'] = async function (el) {
         <p class="help" style="margin:0 0 8px">Tus datos viven solo en este teléfono. Si cambias de teléfono, desinstalas la app o borras los datos, se pierden. Guarda una copia fuera de aquí (Telegram, Drive, WhatsApp o la PC).</p>
         <p style="margin:0 0 10px"><span class="chip ${viejo ? 'bad' : 'ok'}">Última copia: ${fecha(ult)}</span> <span class="help">· ${n} productos</span></p>
         <div class="wr"><button class="btn pri sm" data-act="bk-crear" data-v="1">Copia con fotos</button><button class="btn sm" data-act="bk-crear" data-v="0">Copia sin fotos</button></div>
-        <p class="help" style="margin:8px 0 0">Con fotos eliges Original, Alta (~1600 px), Media (~1000 px) o Miniaturas. Sin fotos es más rápida. Al restaurar también puedes bajar la calidad. Las fotos a tamaño completo ya publicadas siguen en GitHub. La copia no incluye claves ni el token.</p></div>
+        <p class="help" style="margin:8px 0 0">Con fotos incluye miniaturas de los productos usados (para no cerrar la app). Sin fotos es más rápida. Las fotos a tamaño completo ya publicadas siguen en GitHub. La copia no incluye claves ni el token.</p></div>
       <div class="card"><h2>Restaurar una copia</h2><p class="help" style="margin:0 0 8px">Elige un archivo .zip creado con este panel. Se actualizan las tiendas que coinciden y se agregan las demás.</p><button class="btn sm" data-act="bk-restaurar">Elegir copia…</button></div>
       <div class="card"><h2>Copias automáticas del teléfono</h2><p class="help" style="margin:0 0 6px">El panel guarda solo las últimas 3 (una cada 6 horas). Sirven si algo se daña, pero no si cambias de teléfono: para eso haz la copia de arriba.</p><div id="bk-lista"></div></div></div>`;
     return { title: 'Copia de seguridad', back: '/menu', nav: 'menu', body: body, after: pintarSnaps };
