@@ -4289,7 +4289,7 @@ async function flujoRestaurar() {
     try {
       var rn = await NAT.p.elegirZip({ modo: mN, conservarMejor: true });
       if (rn && rn.cancelado) { d0(); return; }
-      if (!rn || rn.invalido || !rn.datos) throw new Error('Este archivo no es una copia del Catálogo de Productos.' + (rn && rn.entradas && rn.entradas.length ? ' Falta datos.json. Contiene: ' + rn.entradas.join(', ') + (rn.entradas.length >= 6 ? '…' : '') : ' No se pudo leer ninguna entrada del archivo: puede estar incompleto o dañado (¿terminó de copiarse al teléfono?).'));
+      if (!rn || rn.invalido || !rn.datos) throw new Error('Este archivo no es una copia del Catálogo de Productos.' + (rn && rn.entradas && rn.entradas.length ? ' Falta datos.json. Contiene: ' + rn.entradas.join(', ') + (rn.entradas.length >= 6 ? '…' : '') : ' No se pudo leer ninguna entrada del archivo: puede estar incompleto o dañado (¿terminó de copiarse al teléfono?).') + (rn && rn.diag ? ' [' + rn.diag + ']' : ''));
       setBusyText('Restaurando…'); MEMF = {}; PURL = {};
       var r0 = aplicarCopia(JSON.parse(rn.datos), rn.fotos || 0, mN, rn.mantenidas || 0); d0();
       toast(msgRestaurado(r0), 'ok', 5000); go('/'); return;
@@ -4820,13 +4820,15 @@ async function srvEstado(ms) {
 async function srvSync(ms) {
   var j = await srvEstado(ms), st = ST(); if (!st) throw new Error('Primero trae o crea la tienda.');
   var bySku = {}, byNom = {}; st.prods.forEach(function (p) { if (p.sku) bySku[skuKey(p.sku)] = p; byNom[nz(p.nombre)] = p; });
-  var n = 0, sin = 0, ahora = Date.now(), primera = !st.srvT, lote = [], vistos = {}, cambioPrecio = 0, sinReg = 0;
+  var n = 0, sin = 0, ahora = Date.now(), primera = !st.srvT, lote = [], vistos = {}, cambioPrecio = 0, sinReg = 0, reactivados = 0;
   j.items.forEach(function (it) {
     var p = (it.sku && bySku[skuKey(it.sku)]) || byNom[nz(it.nombre)]; if (!p) { sin++; return; }
     var antes = stockDe(p);
     if (it.stock != null) p.st = Math.max(0, Math.round(it.stock * 1000) / 1000); /* conserva decimales (0,4 m de cable no es agotado) */
     else if (p.st !== '' && p.st != null && num(p.st) > 0) { p.st = 0; sinReg++; } /* el sistema ya no tiene registro de existencias de un producto que tenía: se agotó */
     var desp = stockDe(p);
+    /* el servidor manda: si tiene existencias, el producto vuelve a estar disponible aunque en el panel estuviera marcado como no disponible */
+    if (desp !== null && desp > 0 && !p.disp) { p.disp = true; reactivados++; }
     /* llegó o volvió a tener cantidad: estaba en 0, o no tenía existencias registradas (salvo la primera lectura) */
     if (desp !== null && desp > 0 && (antes !== null ? antes <= 0 : !primera)) lote.push(p);
     p.vend = +it.vendido || 0; n++; vistos[p.id] = 1;
@@ -4839,10 +4841,10 @@ async function srvSync(ms) {
   if (j.items.length) st.prods.forEach(function (p) { if (p.sku && !vistos[p.id] && p.st !== '' && p.st != null && num(p.st) > 0) { p.st = 0; ausentes++; } });
   if (lote.length) { st.srvLote = ahora; lote.forEach(function (p) { p.llego = ahora; }); }
   st.srvT = ahora;
-  st.dirty = true; save(true); return { n: n, sin: sin, ventas: j.ventas, llegaron: lote.length, precios: cambioPrecio, agotados: ausentes + sinReg };
+  st.dirty = true; save(true); return { n: n, sin: sin, ventas: j.ventas, llegaron: lote.length, precios: cambioPrecio, agotados: ausentes + sinReg, reactivados: reactivados };
 }
 ACT['srv-test'] = async function () { var done = busy('Probando…'); try { var j = await srvEstado(); done(); toast('Conectado: ' + j.cantidad + ' productos' + (j.ventas ? ' con ventas ✓' : ' (sin ventas: AxisPOS no activo)'), '', 4500); } catch (e) { done(); toast(e.message, 'bad', 5000); } };
-ACT['srv-sync'] = async function () { var done = busy('Leyendo stock y ventas…'); try { var r = await srvSync(); done(); toast(r.n + ' productos actualizados' + (r.llegaron ? ' · ' + r.llegaron + ' llegaron o volvieron a tener cantidad' : '') + (r.precios ? ' · ' + r.precios + ' con precio nuevo' : '') + (r.agotados ? ' · ' + r.agotados + ' se agotaron (ya no están en el sistema)' : '') + (r.sin ? ' · ' + r.sin + ' del servidor no están en el panel' : ''), '', 5500); refresh(); } catch (e) { done(); toast(e.message, 'bad', 5000); } };
+ACT['srv-sync'] = async function () { var done = busy('Leyendo stock y ventas…'); try { var r = await srvSync(); done(); toast(r.n + ' productos actualizados' + (r.llegaron ? ' · ' + r.llegaron + ' llegaron o volvieron a tener cantidad' : '') + (r.precios ? ' · ' + r.precios + ' con precio nuevo' : '') + (r.reactivados ? ' · ' + r.reactivados + ' volvieron a disponibles' : '') + (r.agotados ? ' · ' + r.agotados + ' se agotaron (ya no están en el sistema)' : '') + (r.sin ? ' · ' + r.sin + ' del servidor no están en el panel' : ''), '', 5500); refresh(); } catch (e) { done(); toast(e.message, 'bad', 5000); } };
 ROUTES.unshift([/^\/conexion$/, function () {
   var c = APP.cfg, sv = c.srv || (c.srv = { url: '', dias: 30 }), g = G(), st = ST(), S = (st && st.sitio) || {}; bindTo(c, false, function (f) { save(); syncAuth(); if (f === 'ai.prov') refresh(); });
   var body = html`<div class="pg stack"><div class="card"><h2>GitHub (tu sitio)</h2><p class="help" style="margin:0 0 6px">El panel publica directo en el repositorio de tu web. No usa Firebase ni imgbb. Usa un token «fine-grained» solo de ese repositorio con permiso <b>Contents: Read and write</b>.</p>
