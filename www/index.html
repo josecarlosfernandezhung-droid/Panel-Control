@@ -1685,7 +1685,7 @@ function nuevoProducto(st) {
   return { id: uid(), nombre: '', desc: '', precio: '', moneda: '', unidad: '', sku: '', cat: '', fotos: [], vis: true, disp: true, dest: false, ofertaPrecio: '', ofertaFin: '', opciones: [], st: '', costo: '', u: Date.now(), c: Date.now() };
 }
 function prodById(st, id) { for (var i = 0; i < st.prods.length; i++) if (st.prods[i].id === id) return st.prods[i]; return null; }
-function catName(st, id) { for (var i = 0; i < st.cats.length; i++) if (st.cats[i].id === id) return st.cats[i].n; return ''; }
+function catName(st, id) { for (var i = 0; i < st.cats.length; i++) if (st.cats[i].id === id) return limpiaCat(st.cats[i].n) || st.cats[i].n; return ''; }
 function stockDe(p) { /* null = sin control */
   if (p.opciones && p.opciones.length && p.opciones.some(function (o) { return o.st !== '' && o.st != null; })) return p.opciones.reduce(function (s, o) { return s + (o.st === '' || o.st == null ? 0 : num(o.st)); }, 0);
   return p.st === '' || p.st == null ? null : num(p.st);
@@ -3332,10 +3332,15 @@ function wrapText(cx, text, maxW, maxLines) {
   if (lines.length > maxLines) { lines = lines.slice(0, maxLines); var l = lines[maxLines - 1]; while (l.length > 1 && cx.measureText(l + '…').width > maxW) l = l.slice(0, -1); lines[maxLines - 1] = l + '…'; }
   return lines;
 }
-async function bitmapFoto(id) {
+/* preferMini: true → usa miniatura (más rápido y liviano, ideal para anuncios «Rápida») */
+async function bitmapFoto(id, preferMini) {
   try {
-    var rec = await fotoGet(id); if (rec && rec.g) return await decodeImg(rec.g);
-    var u = await fotoURL(id, 'g'); if (!u) return null;
+    var rec = await fotoGet(id);
+    if (rec) {
+      var b = preferMini ? (rec.t || rec.g) : (rec.g || rec.t);
+      if (b) return await decodeImg(b);
+    }
+    var u = await fotoURL(id, preferMini ? 't' : 'g'); if (!u) return null;
     if (u.indexOf('data:') === 0) { var r0 = await fetch(u); return await decodeImg(await r0.blob()); }
     var r = await fetchT(u, { mode: 'cors' }, 20000); return await decodeImg(await r.blob());
   } catch (e) { return null; }
@@ -3369,9 +3374,9 @@ async function anuncioCanvas(st, prods, fmt) {
     var p = prods[i], r = Math.floor(i / cols), c = i % cols, rowN = (r === rows - 1) ? (n - r * cols) : cols;
     var offX = (cols - rowN) * (cw + gap) / 2, x = gx + c * (cw + gap) + offX, y = top + r * (ch + gap);
     cx.save(); rrect(cx, x, y, cw, ch, 26); cx.fillStyle = '#fff'; cx.fill(); cx.clip();
-    var th = Math.round(ch * .62), im = p.fotos[0] ? await bitmapFoto(p.fotos[0]) : null;
+    var th = Math.round(ch * .62), im = p.fotos[0] ? await bitmapFoto(p.fotos[0], window.__adPreferMini) : null;
     cx.fillStyle = '#e8eef0'; cx.fillRect(x, y, cw, th);
-    if (im) { var k = Math.max(cw / im.width, th / im.height), sw = cw / k, sh = th / k; cx.drawImage(im, (im.width - sw) / 2, (im.height - sh) / 2, sw, sh, x, y, cw, th); }
+    if (im) { var k = Math.max(cw / im.width, th / im.height), sw = cw / k, sh = th / k; cx.drawImage(im, (im.width - sw) / 2, (im.height - sh) / 2, sw, sh, x, y, cw, th); if (im.close) try { im.close(); } catch (e0) { } }
     else { cx.fillStyle = col; cx.globalAlpha = .35; cx.font = '800 64px ' + F; cx.textAlign = 'center'; cx.textBaseline = 'middle'; cx.fillText(iniciales(p.nombre), x + cw / 2, y + th / 2); cx.globalAlpha = 1; }
     var pa = precioAnuncio(st, p);
     if (pa.old) { cx.fillStyle = '#e11d48'; rrect(cx, x + 14, y + 14, 112, 42, 21); cx.fill(); cx.fillStyle = '#fff'; cx.font = '800 24px ' + F; cx.textAlign = 'center'; cx.textBaseline = 'middle'; cx.fillText('OFERTA', x + 70, y + 36); }
@@ -3409,9 +3414,9 @@ async function anuncioHoja(st, prods, hn, tot) {
     var p = prods[i], r = Math.floor(i / cols), c = i % cols, rowN = (r === rows - 1) ? (n - r * cols) : cols;
     var offX = (cols - rowN) * (cw + gap) / 2, x = gx + c * (cw + gap) + offX, y = top + r * (ch + gap);
     cx.save(); rrect(cx, x, y, cw, ch, 26); cx.fillStyle = '#fff'; cx.fill(); cx.clip();
-    var th = Math.round(ch * .62), im = p.fotos[0] ? await bitmapFoto(p.fotos[0]) : null;
+    var th = Math.round(ch * .62), im = p.fotos[0] ? await bitmapFoto(p.fotos[0], window.__adPreferMini) : null;
     cx.fillStyle = '#e8eef0'; cx.fillRect(x, y, cw, th);
-    if (im) { var k = Math.max(cw / im.width, th / im.height), sw = cw / k, sh = th / k; cx.drawImage(im, (im.width - sw) / 2, (im.height - sh) / 2, sw, sh, x, y, cw, th); if (im.close) im.close(); }
+    if (im) { var k = Math.max(cw / im.width, th / im.height), sw = cw / k, sh = th / k; cx.drawImage(im, (im.width - sw) / 2, (im.height - sh) / 2, sw, sh, x, y, cw, th); if (im.close) try { im.close(); } catch (e0) { } }
     else { cx.fillStyle = col; cx.globalAlpha = .35; cx.font = '800 64px ' + F; cx.textAlign = 'center'; cx.textBaseline = 'middle'; cx.fillText(iniciales(p.nombre), x + cw / 2, y + th / 2); cx.globalAlpha = 1; }
     var pa = precioAnuncio(st, p);
     if (pa.old) { cx.fillStyle = '#e11d48'; rrect(cx, x + 14, y + 14, 112, 42, 21); cx.fill(); cx.fillStyle = '#fff'; cx.font = '800 24px ' + F; cx.textAlign = 'center'; cx.textBaseline = 'middle'; cx.fillText('OFERTA', x + 70, y + 36); }
@@ -3430,7 +3435,2760 @@ async function anuncioHoja(st, prods, hn, tot) {
 }
 
 /* ---------- tarjetas de un solo producto (estilos extra para estados de WhatsApp) ---------- */
-var AD_ESTILOS = [['grid', 'Catálogo'], ['foto', 'Foto grande'], ['mosaico', 'Mosaico'], ['oferta', 'Oferta'], ['claro', 'Claro']];
+/* ===== Estilos de tarjeta del catálogo clásico (portados tal cual) ===== */
+var TT_CARDS = (function () {
+var state = { config: {} };
+var FONT_BODY = '', FONT_DISPLAY = '';
+function colorVariantsBadgeHeight(){ return 0; }
+async function loadImg(src){ return src || null; }
+function formatNumber(n){
+  n = Number(n)||0;
+  return n.toLocaleString("es-ES", {minimumFractionDigits: n % 1 === 0 ? 0 : 2, maximumFractionDigits:2});
+}
+
+const UNIT_LABELS = { und:"und", caja:"caja", paquete:"paq.", galon:"gal.", litro:"L", metro:"m", libra:"lb", kg:"kg", saco:"saco", rollo:"rollo" };
+// Un producto puede marcarse para que su precio se muestre SIEMPRE en la
+// moneda secundaria (normalmente USD) tal cual se escribió, sin pasar por la
+// tasa de cambio general — útil para productos puntuales que José cobra
+// directo en USD aunque el resto del catálogo esté en CUP.
+
+function priceCurrencyLabel(cfg, product){
+  if(product && product.priceCurrencyOverride === "secondary" && cfg.secondaryCurrency) return cfg.secondaryCurrency;
+  return cfg.currency;
+}
+// Recuerda, por categoría, la última esquina elegida para las miniaturas del
+// mosaico "esquina" — así José no tiene que volver a elegirla cada vez que
+// carga un producto nuevo de la misma categoría (ej: siempre camas en
+// esquina arriba-derecha).
+
+function roundRect(ctx,x,y,w,h,r){
+  ctx.beginPath();
+  ctx.moveTo(x+r,y);
+  ctx.arcTo(x+w,y,x+w,y+h,r);
+  ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r);
+  ctx.arcTo(x,y,x+w,y,r);
+  ctx.closePath();
+}
+/* Silueta de etiqueta colgante (como las de tienda física): rectángulo con
+   punta triangular a la izquierda y esquinas redondeadas a la derecha.
+   x,y = esquina superior del cuerpo (SIN contar la punta); tipLen = largo de la punta. */
+
+function hangTagPath(ctx, x, y, w, h, tipLen, r){
+  const midY = y + h/2;
+  ctx.beginPath();
+  ctx.moveTo(x - tipLen, midY);
+  ctx.lineTo(x, y);
+  ctx.lineTo(x+w-r, y);
+  ctx.arcTo(x+w, y, x+w, y+r, r);
+  ctx.lineTo(x+w, y+h-r);
+  ctx.arcTo(x+w, y+h, x+w-r, y+h, r);
+  ctx.lineTo(x, y+h);
+  ctx.closePath();
+}
+/* Estrella/estallido tipo cómic con puntas irregulares (radio alterna un poco
+   entre puntas para que se vea más "explosivo" y menos geométrico perfecto). */
+
+function burstStarPath(ctx, cx, cy, outerR, innerR, spikes){
+  ctx.beginPath();
+  const step = Math.PI / spikes;
+  let rot = -Math.PI/2;
+  for(let i=0; i<spikes; i++){
+    const rOuter = outerR * (i % 2 === 0 ? 1 : 0.92);
+    const xo = cx + Math.cos(rot) * rOuter, yo = cy + Math.sin(rot) * rOuter;
+    if(i===0) ctx.moveTo(xo, yo); else ctx.lineTo(xo, yo);
+    rot += step;
+    const xi = cx + Math.cos(rot) * innerR, yi = cy + Math.sin(rot) * innerR;
+    ctx.lineTo(xi, yi);
+    rot += step;
+  }
+  ctx.closePath();
+}
+
+function fitContain(img, maxW, maxH){
+  const scale = Math.min(maxW/img.width, maxH/img.height);
+  return { w: img.width*scale, h: img.height*scale };
+}
+
+function drawImageCover(ctx, img, x, y, w, h){
+  const ir = img.width / img.height;
+  const r = w / h;
+  let sx,sy,sw,sh;
+  if(ir > r){
+    sh = img.height; sw = sh * r;
+    sx = (img.width - sw)/2; sy = 0;
+  }else{
+    sw = img.width; sh = sw / r;
+    sx = 0; sy = (img.height - sh)/2;
+  }
+  ctx.drawImage(img, sx, sy, sw, sh, x, y, w, h);
+}
+/* ---- Recorte / zoom / paneo de la foto del producto. Por defecto (sin
+   ajuste) se comporta exactamente como drawImageCover (foto centrada llenando
+   el marco). Si el producto tiene un "photoFocus" guardado (desde el editor
+   de foto), se usa zoom (1 = normal, hasta 3 = más acercado) y ox/oy (-1 a 1)
+   para mover el recorte dentro de la foto. ---- */
+
+function getPhotoFocus(product, cfg){
+  const f = (product && product.photoFocus) || (cfg && cfg.photoFocusDefault) || {};
+  return {
+    zoom: (typeof f.zoom === "number" && f.zoom > 0) ? f.zoom : 1,
+    ox: (typeof f.ox === "number") ? f.ox : 0,
+    oy: (typeof f.oy === "number") ? f.oy : 0
+  };
+}
+
+function drawImageWithFocus(ctx, img, x, y, w, h, focus){
+  focus = focus || {zoom:1, ox:0, oy:0};
+  const zoom = Math.max(1, Math.min(3.5, focus.zoom || 1));
+  const ir = img.width / img.height;
+  const r = w / h;
+  let baseSw, baseSh;
+  if(ir > r){ baseSh = img.height; baseSw = baseSh * r; }
+  else{ baseSw = img.width; baseSh = baseSw / r; }
+  const sw = baseSw / zoom, sh = baseSh / zoom;
+  const cx = (img.width - baseSw) / 2, cy = (img.height - baseSh) / 2;
+  const panRangeX = baseSw - sw, panRangeY = baseSh - sh;
+  let sx = cx + (panRangeX/2) * (1 + (focus.ox||0));
+  let sy = cy + (panRangeY/2) * (1 + (focus.oy||0));
+  sx = Math.max(0, Math.min(img.width - sw, sx));
+  sy = Math.max(0, Math.min(img.height - sh, sy));
+  ctx.drawImage(img, sx, sy, sw, sh, x, y, w, h);
+}
+
+function getWrappedLines(ctx, text, maxWidth, maxLines, font){
+  if(font) ctx.font = font;
+  const words = String(text).split(" ");
+  let line = "";
+  let lines = [];
+  for(const word of words){
+    const test = line ? line + " " + word : word;
+    if(ctx.measureText(test).width > maxWidth && line){
+      lines.push(line);
+      line = word;
+    }else{
+      line = test;
+    }
+  }
+  if(line) lines.push(line);
+  if(maxLines && lines.length > maxLines){
+    lines = lines.slice(0, maxLines);
+    lines[maxLines-1] = lines[maxLines-1].replace(/\s*\S*$/, "") + "…";
+  }
+  return lines;
+}
+/* Ajusta el tamaño de fuente de un título hacia abajo (en pasos de 2px) hasta que
+   quepa en maxLines líneas sin tener que truncar con "…". Así, cuando un producto
+   tiene un nombre muy largo, el texto se hace más chico en vez de recortarse o
+   invadir otros elementos de la tarjeta. Si ni siquiera al tamaño mínimo cabe,
+   recién ahí se trunca (mismo comportamiento de antes, como último recurso). */
+
+function fitTitleFont(ctx, text, maxWidth, maxLines, weight, baseSizePx, family, minSizePx){
+  minSizePx = minSizePx || Math.max(18, Math.round(baseSizePx*0.62));
+  let size = Math.max(baseSizePx, minSizePx);
+  let font = `${weight} ${size}px ${family}`;
+  let lines = getWrappedLines(ctx, text, maxWidth, null, font);
+  while(lines.length > maxLines && size > minSizePx){
+    size = Math.max(minSizePx, size - 2);
+    font = `${weight} ${size}px ${family}`;
+    lines = getWrappedLines(ctx, text, maxWidth, null, font);
+  }
+  if(lines.length > maxLines){
+    font = `${weight} ${size}px ${family}`;
+    lines = getWrappedLines(ctx, text, maxWidth, maxLines, font);
+  }
+  ctx.font = font;
+  return { lines, size, font };
+}
+
+function hexToRgb(hex){
+  const h = (hex||"#16a34a").replace("#","");
+  const full = h.length===3 ? h.split("").map(c=>c+c).join("") : h;
+  const num = parseInt(full,16) || 0x16a34a;
+  return { r:(num>>16)&255, g:(num>>8)&255, b:num&255 };
+}
+
+function shadeColor(hex, percent){
+  // percent negativo oscurece, positivo aclara
+  const {r,g,b} = hexToRgb(hex);
+  const t = percent<0 ? 0 : 255;
+  const p = Math.abs(percent);
+  const nr = Math.round((t-r)*p)+r, ng = Math.round((t-g)*p)+g, nb = Math.round((t-b)*p)+b;
+  return `rgb(${nr},${ng},${nb})`;
+}
+
+function rgba(hex, alpha){
+  const {r,g,b} = hexToRgb(hex);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+
+const FONT_STACKS = {
+  moderna:    { body: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif', display: '"Poppins", "Trebuchet MS", "Segoe UI", Verdana, sans-serif' },
+  elegante:   { body: 'Georgia, "Times New Roman", serif', display: 'Georgia, "Times New Roman", serif' },
+  redondeada: { body: 'Verdana, "Arial Rounded MT Bold", Arial, sans-serif', display: 'Verdana, "Arial Rounded MT Bold", Arial, sans-serif' },
+  condensada: { body: '"Arial Narrow", Arial, sans-serif', display: 'Impact, "Arial Narrow", Arial, sans-serif' },
+  titular:    { body: '"Arial Black", Arial, sans-serif', display: '"Arial Black", Arial, sans-serif' },
+  manuscrita: { body: '"Segoe Script", "Bradley Hand", cursive', display: '"Segoe Script", "Brush Script MT", cursive' },
+  tecnica:    { body: '"Courier New", monospace', display: '"Courier New", monospace' }
+};
+
+function getCardTuning(cfg){
+  const t = cfg.cardTuning || {};
+  return {
+    logoScale: t.logoScale || 1,
+    nameScale: t.nameScale || 1,
+    priceScale: t.priceScale || 1,
+    priceBg: t.priceBg || "auto",
+    pricePos: t.pricePos || "auto",
+    ribbonScale: t.ribbonScale || 1,
+    ribbonPos: t.ribbonPos || "diagonal",
+    lowStockEnabled: t.lowStockEnabled !== false,
+    lowStockThreshold: (t.lowStockThreshold !== undefined && t.lowStockThreshold !== null && t.lowStockThreshold !== "") ? Number(t.lowStockThreshold) : 2,
+    lowStockPos: t.lowStockPos || "tr",
+    ofertaPos: t.ofertaPos || "auto",
+    blurScale: (t.blurScale !== undefined && t.blurScale !== null && t.blurScale !== "") ? Number(t.blurScale) : 1,
+    contactScale: (t.contactScale !== undefined && t.contactScale !== null && t.contactScale !== "") ? Number(t.contactScale) : 1
+  };
+}
+/* ---- Ajuste de posiciones sobre un estilo YA EXISTENTE (no crea nada nuevo,
+   solo desplaza cada elemento -foto, logo, nombre, categoría, precio,
+   contacto- respecto a donde ese estilo lo pone normalmente). Se guarda como
+   fracción de W/H por estilo, en cfg.customLayoutByStyle[estilo][elemento] =
+   {fx,fy}, así cada estilo conserva su propio ajuste. ---- */
+
+const STYLE_LAYOUT_ELS = ["photo","logo","storeName","category","name","price","contact"];
+
+function getStyleOffsetsPx(cfg, styleKey, W, H){
+  const raw = (cfg.customLayoutByStyle && cfg.customLayoutByStyle[styleKey]) || {};
+  const out = {};
+  STYLE_LAYOUT_ELS.forEach(k=>{
+    const o = raw[k] || {};
+    out[k] = { dx: (o.fx||0) * W, dy: (o.fy||0) * H };
+  });
+  return out;
+}
+// Aproximación de dónde cae cada elemento en cada estilo (solo se usa para
+// ubicar el "manijero" de arrastre al abrir el editor; el dibujo real lo hace
+// cada función drawCardXxx con su propio layout + el ajuste guardado).
+
+function isPriceOverridden(cfg){
+  const T = getCardTuning(cfg);
+  return T.pricePos !== "auto" || T.priceBg !== "auto";
+}
+/* Dibuja el precio en la esquina elegida por el usuario, con el fondo elegido.
+   anchorBox = {left, top, right, bottom} : el área (normalmente la foto) sobre
+   la que se ancla la esquina. Solo se usa cuando el usuario cambió la posición
+   o el fondo del precio en los ajustes finos; si no, cada estilo dibuja el suyo. */
+
+function getEffectivePalette(cfg){
+  cfg = cfg || state.config;
+  const base = cfg.primaryColor || "#16a34a";
+  const extra = Array.isArray(cfg.extraColors) ? cfg.extraColors.filter(Boolean) : [];
+  return [base, ...extra];
+}
+
+function hashStringToIndex(str, mod){
+  let h = 0;
+  str = String(str || "");
+  for(let i=0; i<str.length; i++){ h = (h*31 + str.charCodeAt(i)) >>> 0; }
+  return mod > 0 ? h % mod : 0;
+}
+
+function getProductAccentColor(product, cfg){
+  cfg = cfg || state.config;
+  if(product && product.colorOverride) return product.colorOverride;
+  const palette = getEffectivePalette(cfg);
+  const mode = cfg.colorMode || "single";
+
+  if(mode === "estado" && product){
+    if(typeof isOnSale === "function" && isOnSale(product)) return cfg.saleColor || "#dc2626";
+    if(product.isNew) return cfg.newColor || "#7e22ce";
+    return palette[0];
+  }
+  if(mode === "category" && product){
+    const cat = (product.category || "").trim();
+    if(cat){
+      const custom = (cfg.categoryColors || {})[cat];
+      if(custom) return custom;
+      if(palette.length > 1) return palette[hashStringToIndex(cat, palette.length)];
+    }
+    return palette[0];
+  }
+  if(mode === "rotate" && palette.length > 1 && product){
+    return palette[hashStringToIndex(product.id, palette.length)];
+  }
+  return palette[0];
+}
+/* Cuando el producto termina usando el color principal "de base" (no un color
+   específico de oferta/nuevo/categoría/rotación) y hay más de un color principal
+   elegido en Configuración, se dibuja como degradado entre esos colores en el
+   precio y la etiqueta de categoría. En cualquier otro caso devuelve null y todo
+   sigue pintándose con el color sólido de siempre (accent). */
+
+function getProductAccentGradient(product, cfg){
+  cfg = cfg || state.config;
+  if(product && product.colorOverride) return null;
+  const mains = Array.isArray(cfg.mainColors) ? cfg.mainColors.filter(Boolean) : [];
+  if(mains.length < 2) return null;
+  const mode = cfg.colorMode || "single";
+  if(mode === "estado" && product){
+    if(typeof isOnSale === "function" && isOnSale(product)) return null;
+    if(product.isNew) return null;
+    return mains;
+  }
+  if(mode === "category" && product){
+    const cat = (product.category || "").trim();
+    if(cat && (cfg.categoryColors || {})[cat]) return null;
+    const palette = getEffectivePalette(cfg);
+    return palette.length > 1 ? null : mains; // si hay paleta con varios colores, category elige uno específico
+  }
+  if(mode === "rotate"){
+    const palette = getEffectivePalette(cfg);
+    return palette.length > 1 ? null : mains;
+  }
+  return mains; // single
+}
+/* Fondo/texto en degradado si "grad" trae 2+ colores; si no, el color sólido de siempre. */
+
+function accentFillStyle(ctx, grad, accent, x, y, w, h){
+  if(!grad || grad.length < 2) return accent;
+  const g = ctx.createLinearGradient(x, y, x + w, y + h);
+  grad.forEach((c, i)=> g.addColorStop(i/(grad.length-1), c));
+  return g;
+}
+
+
+function drawLineWithLastWordAccent(ctx, line, x, y, normalColor, accentColor, colorLastWord){
+  if(!colorLastWord){ ctx.fillStyle = normalColor; ctx.fillText(line, x, y); return; }
+  const words = line.split(" ");
+  if(words.length === 1){ ctx.fillStyle = accentColor; ctx.fillText(line, x, y); return; }
+  let cx = x;
+  words.forEach((w, i)=>{
+    const isLast = i === words.length - 1;
+    ctx.fillStyle = isLast ? accentColor : normalColor;
+    ctx.fillText(w, cx, y);
+    cx += ctx.measureText(w + " ").width;
+  });
+}
+
+
+function drawPriceTagGeneric(ctx, cfg, accent, product, anchorBox){
+  const _grad = getProductAccentGradient(product, cfg);
+  const T = getCardTuning(cfg);
+  const bg = T.priceBg === "auto" ? "tag" : T.priceBg;
+  const pos = (_cardCorners && _cardCorners.price) ? _cardCorners.price : (T.pricePos === "auto" ? "br" : T.pricePos);
+  const priceText = priceCurrencyLabel(cfg, product) + " " + formatNumber(product.price);
+  const priceFontPx = Math.round(60 * T.priceScale);
+  const labelFontPx = Math.round(24 * T.priceScale);
+
+  let boxW, boxH, tipLen = 0, badgeR = 0;
+  if(bg === "tag"){
+    ctx.font = `800 ${labelFontPx}px ${FONT_DISPLAY}`;
+    const labelW = ctx.measureText("PRECIO").width;
+    ctx.font = `800 ${priceFontPx}px ${FONT_DISPLAY}`;
+    const priceW = ctx.measureText(priceText).width;
+    boxW = Math.max(labelW, priceW) + 52;
+    boxH = Math.round(132 * T.priceScale);
+  }else if(bg === "pill"){
+    ctx.font = `800 ${priceFontPx}px ${FONT_DISPLAY}`;
+    const priceW = ctx.measureText(priceText).width;
+    boxW = priceW + 66;
+    boxH = Math.round(94 * T.priceScale);
+  }else if(bg === "hangtag"){
+    ctx.font = `800 ${priceFontPx}px ${FONT_DISPLAY}`;
+    const priceW = ctx.measureText(priceText).width;
+    boxH = Math.round(96 * T.priceScale);
+    tipLen = Math.round(boxH * 0.55);
+    boxW = priceW + 56 + tipLen; // tipLen incluido para reservar espacio a la izquierda
+  }else if(bg === "circle"){
+    ctx.font = `800 ${Math.round(priceFontPx*0.86)}px ${FONT_DISPLAY}`;
+    const priceW = ctx.measureText(priceText).width;
+    badgeR = Math.max(Math.round(70 * T.priceScale), Math.round((priceW+30)/2));
+    boxW = badgeR*2; boxH = badgeR*2;
+  }else if(bg === "burst"){
+    ctx.font = `800 ${Math.round(priceFontPx*0.82)}px ${FONT_DISPLAY}`;
+    const priceW = ctx.measureText(priceText).width;
+    badgeR = Math.max(Math.round(92 * T.priceScale), Math.round((priceW+40)/1.5));
+    boxW = badgeR*2; boxH = badgeR*2;
+  }else{ // plain
+    ctx.font = `800 ${priceFontPx}px ${FONT_DISPLAY}`;
+    const priceW = ctx.measureText(priceText).width;
+    boxW = priceW + 16;
+    boxH = Math.round(78 * T.priceScale);
+  }
+
+  let x,y;
+  if(pos === "br"){ x = anchorBox.right - boxW; y = anchorBox.bottom - boxH; }
+  else if(pos === "bl"){ x = anchorBox.left; y = anchorBox.bottom - boxH; }
+  else if(pos === "tr"){ x = anchorBox.right - boxW; y = anchorBox.top; }
+  else { x = anchorBox.left; y = anchorBox.top; } // tl
+  // la punta de la etiqueta colgante y el aro del círculo/estallido necesitan
+  // un pelín de margen extra para no quedar pegados al borde de la tarjeta
+  if(bg === "hangtag" || bg === "circle" || bg === "burst"){
+    const margin = 6;
+    if(pos === "br" || pos === "tr") x -= margin; else x += margin;
+  }
+
+  if(bg === "tag"){
+    ctx.save();
+    ctx.shadowColor = "rgba(0,0,0,0.45)"; ctx.shadowBlur = 26; ctx.shadowOffsetY = 10;
+    ctx.fillStyle = "#ffffff";
+    roundRect(ctx, x, y, boxW, boxH, 18);
+    ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = accentFillStyle(ctx, _grad, accent, x, y, boxW, boxH);
+    ctx.font = `800 ${labelFontPx}px ${FONT_DISPLAY}`;
+    try{ ctx.letterSpacing = "1px"; }catch(e){}
+    ctx.fillText("PRECIO", x+24, y+labelFontPx+18);
+    try{ ctx.letterSpacing = "0px"; }catch(e){}
+    ctx.fillStyle = "#111417";
+    ctx.font = `800 ${priceFontPx}px ${FONT_DISPLAY}`;
+    ctx.fillText(priceText, x+24, y+boxH-22);
+  }else if(bg === "pill"){
+    ctx.save();
+    ctx.shadowColor = "rgba(0,0,0,0.4)"; ctx.shadowBlur = 22; ctx.shadowOffsetY = 8;
+    ctx.fillStyle = accentFillStyle(ctx, _grad, accent, x, y, boxW, boxH);
+    roundRect(ctx, x, y, boxW, boxH, boxH/2);
+    ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = "#ffffff";
+    ctx.font = `800 ${priceFontPx}px ${FONT_DISPLAY}`;
+    ctx.textBaseline = "middle";
+    ctx.textAlign = "center";
+    ctx.fillText(priceText, x+boxW/2, y+boxH/2+2);
+    ctx.textAlign = "left";
+    ctx.textBaseline = "alphabetic";
+  }else if(bg === "hangtag"){
+    // el cuerpo del rectángulo empieza después de la punta
+    const bodyX = x + tipLen, bodyW = boxW - tipLen;
+    ctx.save();
+    ctx.shadowColor = "rgba(0,0,0,0.45)"; ctx.shadowBlur = 24; ctx.shadowOffsetY = 8;
+    hangTagPath(ctx, bodyX, y, bodyW, boxH, tipLen, 14);
+    ctx.fillStyle = "#ffffff";
+    ctx.fill();
+    ctx.restore();
+    ctx.save();
+    hangTagPath(ctx, bodyX, y, bodyW, boxH, tipLen, 14);
+    ctx.lineWidth = 3; ctx.strokeStyle = accentFillStyle(ctx, _grad, accent, bodyX, y, bodyW, boxH); ctx.stroke();
+    ctx.restore();
+    // agujerito + cordón, como una etiqueta física
+    const holeX = x + tipLen*0.42, holeY = y + boxH/2;
+    ctx.save();
+    ctx.beginPath(); ctx.arc(holeX, holeY, 6, 0, Math.PI*2);
+    ctx.strokeStyle = accentFillStyle(ctx, _grad, accent, holeX-6, holeY-6, 12, 12); ctx.lineWidth = 3; ctx.stroke();
+    ctx.restore();
+    ctx.fillStyle = "#111417";
+    ctx.font = `800 ${priceFontPx}px ${FONT_DISPLAY}`;
+    ctx.textBaseline = "middle";
+    ctx.fillText(priceText, bodyX + 26, y + boxH/2 + 2);
+    ctx.textBaseline = "alphabetic";
+  }else if(bg === "circle"){
+    const cx = x + badgeR, cy = y + badgeR;
+    ctx.save();
+    ctx.shadowColor = "rgba(0,0,0,0.45)"; ctx.shadowBlur = 22; ctx.shadowOffsetY = 8;
+    ctx.beginPath(); ctx.arc(cx, cy, badgeR, 0, Math.PI*2);
+    ctx.fillStyle = accentFillStyle(ctx, _grad, accent, x, y, boxW, boxH); ctx.fill();
+    ctx.restore();
+    ctx.save();
+    ctx.beginPath(); ctx.arc(cx, cy, badgeR-7, 0, Math.PI*2);
+    ctx.lineWidth = 4; ctx.strokeStyle = "rgba(255,255,255,0.85)"; ctx.stroke();
+    ctx.restore();
+    ctx.fillStyle = "#ffffff";
+    ctx.textAlign = "center";
+    const currency = priceCurrencyLabel(cfg, product), amount = formatNumber(product.price);
+    ctx.font = `800 ${Math.round(priceFontPx*0.86)}px ${FONT_DISPLAY}`;
+    ctx.textBaseline = "alphabetic";
+    ctx.fillText(amount, cx, cy + 4);
+    ctx.font = `700 ${Math.round(labelFontPx*0.9)}px ${FONT_DISPLAY}`;
+    try{ ctx.letterSpacing = "1px"; }catch(e){}
+    ctx.fillText(currency.toUpperCase(), cx, cy + 4 + Math.round(labelFontPx*0.95));
+    try{ ctx.letterSpacing = "0px"; }catch(e){}
+    ctx.textAlign = "left";
+  }else if(bg === "burst"){
+    const cx = x + badgeR, cy = y + badgeR;
+    ctx.save();
+    ctx.shadowColor = "rgba(0,0,0,0.45)"; ctx.shadowBlur = 20; ctx.shadowOffsetY = 6;
+    burstStarPath(ctx, cx, cy, badgeR, badgeR*0.72, 11);
+    ctx.fillStyle = accentFillStyle(ctx, _grad, accent, x, y, boxW, boxH); ctx.fill();
+    ctx.restore();
+    ctx.save();
+    burstStarPath(ctx, cx, cy, badgeR, badgeR*0.72, 11);
+    ctx.lineWidth = 5; ctx.strokeStyle = "#ffffff"; ctx.stroke();
+    ctx.restore();
+    ctx.fillStyle = "#ffffff";
+    ctx.textAlign = "center";
+    ctx.font = `800 ${Math.round(priceFontPx*0.82)}px ${FONT_DISPLAY}`;
+    ctx.fillText(priceText, cx, cy + Math.round(priceFontPx*0.28));
+    ctx.textAlign = "left";
+  }else{ // plain
+    ctx.save();
+    ctx.shadowColor = "rgba(0,0,0,0.55)"; ctx.shadowBlur = 12; ctx.shadowOffsetY = 3;
+    ctx.fillStyle = accentFillStyle(ctx, _grad, accent, x, y, boxW, boxH);
+    ctx.font = `800 ${priceFontPx}px ${FONT_DISPLAY}`;
+    ctx.fillText(priceText, x+8, y+boxH-20);
+    ctx.restore();
+  }
+}
+
+/* ============================================================
+   COLOR DE LAS TARJETAS — un color, varios colores, por categoría
+   o resaltando ofertas/nuevos, según lo que se elija en Configuración.
+   ============================================================ */
+
+function isOnSale(p){
+  const op = Number(p.oldPrice);
+  const p2 = Number(p.price);
+  return !!(op && p2 && op > p2);
+}
+
+// Insignia de OFERTA con el % de descuento, en la esquina opuesta a la de
+// "pocas unidades" por defecto para que no se solapen.
+
+function truncateToWidth(ctx, text, maxWidth){
+  if(ctx.measureText(text).width <= maxWidth) return text;
+  let t = text;
+  while(t.length > 1 && ctx.measureText(t + "…").width > maxWidth){
+    t = t.slice(0, -1);
+  }
+  return t + "…";
+}
+
+/* ============================================================
+   BANNER DE SECCIÓN (categoría o "Productos Nuevos") PARA EL PDF
+   ============================================================ */
+
+let _cardCorners = null;
+// Cuánto hay que empujar hacia abajo las insignias de esquina arriba (tl/tr)
+// para que no se monten sobre un encabezado ancho propio del estilo (como la
+// cinta blanca con el nombre, en "Cinta y sello"). 0 = sin ajuste, cada
+// estilo lo deja en 0 salvo que necesite reservar espacio arriba.
+
+let _cardTopInset = 0;
+
+/* ============================================================
+   REPARTO AUTOMÁTICO DE ESQUINAS — evita que el precio (si se movió a mano),
+   la insignia de OFERTA, la de "pocas unidades", la de urgencia y el QR
+   terminen amontonados/tapados entre sí en la tarjeta.
+
+   El precio (si se movió a mano) y el QR son "exclusivos": cada uno pide su
+   esquina y, si ya está tomada, se corre a la esquina libre más parecida.
+
+   OFERTA, "pocas unidades" y urgencia, en cambio, cuando dos o más quieren
+   la MISMA esquina, en vez de correrse a otra se APILAN ahí, una debajo de
+   la otra (con un pequeño espacio entre medio) — así José las ve juntas,
+   como pidió, en vez de repartidas por toda la tarjeta.
+
+   Si el apilado en una esquina crece demasiado (3 insignias juntas), se
+   calcula cuánto "estirar" la tarjeta (ver computeCornerStretch) para que
+   ese apilado tenga espacio propio y no tape la foto ni el texto de abajo.
+   ============================================================ */
+
+const CORNER_FALLBACK_ORDER = {
+  tl: ["tl","bl","tr","br"],
+  tr: ["tr","br","tl","bl"],
+  bl: ["bl","tl","br","tr"],
+  br: ["br","tr","bl","tl"]
+};
+
+const CORNER_STACK_GAP = 24; // separación entre insignias apiladas (W siempre es 1080)
+
+function cornerBadgeHeight(scale){ return Math.round(64*(scale||1)); }
+
+function drawCornerBadge(ctx, W, H, text, color, corner, scale, stackOffsetPx){
+  scale = scale || 1;
+  stackOffsetPx = stackOffsetPx || 0;
+  const padC = Math.round(W*0.045);
+  ctx.save();
+  ctx.font = "800 " + Math.round(38*scale) + "px " + FONT_DISPLAY;
+  const textW = ctx.measureText(text).width;
+  const badgeW = Math.min(W*0.62, textW + Math.round(56*scale));
+  const badgeH = Math.round(64*scale);
+  let bx, by;
+  if(corner === "tl"){ bx = padC; by = padC + stackOffsetPx + _cardTopInset; }
+  else if(corner === "tr"){ bx = W - padC - badgeW; by = padC + stackOffsetPx + _cardTopInset; }
+  else if(corner === "bl"){ bx = padC; by = H - padC - badgeH - stackOffsetPx; }
+  else { bx = W - padC - badgeW; by = H - padC - badgeH - stackOffsetPx; }
+
+  ctx.shadowColor = "rgba(0,0,0,0.45)"; ctx.shadowBlur = 14; ctx.shadowOffsetY = 3;
+  ctx.fillStyle = color;
+  roundRect(ctx, bx, by, badgeW, badgeH, Math.round(badgeH*0.28));
+  ctx.fill();
+  ctx.shadowColor = "transparent";
+  ctx.strokeStyle = "rgba(255,255,255,0.85)";
+  ctx.lineWidth = 2;
+  roundRect(ctx, bx, by, badgeW, badgeH, Math.round(badgeH*0.28));
+  ctx.stroke();
+
+  let fontSize = Math.round(38*scale);
+  ctx.font = "800 " + fontSize + "px " + FONT_DISPLAY;
+  while(ctx.measureText(text).width > badgeW - Math.round(28*scale) && fontSize > 14){
+    fontSize -= 2; ctx.font = "800 " + fontSize + "px " + FONT_DISPLAY;
+  }
+  ctx.fillStyle = "#ffffff";
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText(text, bx + badgeW/2, by + badgeH/2 + 1);
+  ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+  ctx.restore();
+}
+
+// Guarda, mientras se genera UNA tarjeta, en qué esquina va cada cosa (ver
+// resolveCardCorners más abajo). Es seguro como variable de módulo porque
+// renderCardToCanvas siempre se espera (await) una tarjeta a la vez, nunca
+// varias en paralelo.
+
+function resolveCardCorners(product, cfg, T){
+  const out = {
+    price:null, oferta:null, lowStock:null, urgency:null, qr:null,
+    stacks: { tl:[], tr:[], bl:[], br:[] }
+  };
+  const taken = new Set();        // esquinas con algo EXCLUSIVO (precio, QR)
+  const stackCorners = new Set(); // esquinas donde ya hay una o más insignias apiladas
+  const claim = (key, preferred)=>{
+    const order = CORNER_FALLBACK_ORDER[preferred] || ["tl","tr","bl","br"];
+    let chosen = order.find(c=>!taken.has(c) && !stackCorners.has(c));
+    if(!chosen) chosen = order.find(c=>!taken.has(c)) || preferred;
+    taken.add(chosen);
+    out[key] = chosen;
+  };
+  const stackItem = (key, preferred, heightPx)=>{
+    let corner = preferred;
+    if(taken.has(corner) && !stackCorners.has(corner)){
+      // esa esquina ya la usa algo exclusivo (precio movido a mano) — se
+      // busca la siguiente esquina libre en vez de tapar el precio
+      const order = CORNER_FALLBACK_ORDER[preferred] || ["tl","tr","bl","br"];
+      corner = order.find(c=> !taken.has(c) || stackCorners.has(c)) || preferred;
+    }
+    const stack = out.stacks[corner];
+    const offset = stack.reduce((sum,s)=> sum + s.heightPx + CORNER_STACK_GAP, 0);
+    out[key] = corner;
+    out[key+"Offset"] = offset;
+    stack.push({ key, heightPx });
+    stackCorners.add(corner);
+    taken.add(corner);
+  };
+  // Orden de prioridad: primero lo que José posicionó a mano (precio), luego
+  // lo más importante para vender (oferta), después stock y urgencia, y el
+  // QR al final — es lo menos crítico de mover si hay que hacerle espacio.
+  if(isPriceOverridden(cfg)){
+    claim("price", T.pricePos === "auto" ? "br" : T.pricePos);
+  }
+  const outOfStock = isOutOfStock(product);
+  if(!outOfStock && isOnSale(product)){
+    const frameStyle = cfg.promoFrameStyle || "borde";
+    const frameHasOwnText = (frameStyle === "cinta" || frameStyle === "franja");
+    if(!frameHasOwnText){
+      const preferred = (T.ofertaPos && T.ofertaPos !== "auto") ? T.ofertaPos : ((T.lowStockPos === "tl") ? "tr" : "tl");
+      stackItem("oferta", preferred, cornerBadgeHeight(0.86));
+    }
+  }
+  if(!outOfStock && product.colorVariants && product.colorVariants.filter(v=>v&&v.hex).length){
+    stackItem("colors", "tr", colorVariantsBadgeHeight());
+  }
+  if(!outOfStock && T.lowStockEnabled){
+    const qty = product.qty;
+    if(qty !== undefined && qty !== null && qty !== "" && !isNaN(qty)){
+      const q = Number(qty);
+      const threshold = T.lowStockThreshold !== undefined ? T.lowStockThreshold : 2;
+      if(q > 0 && q <= threshold){
+        stackItem("lowStock", T.lowStockPos || "tr", cornerBadgeHeight(0.86));
+      }
+    }
+  }
+  if(!outOfStock && product.urgencyLabel && product.urgencyLabel.trim()){
+    stackItem("urgency", "bl", cornerBadgeHeight(0.8));
+  }
+  if(cfg.qrEnabled && buildWhatsappQrText(product, cfg)){
+    claim("qr", cfg.qrPosition || "bl");
+  }
+  return out;
+}
+
+// Cuánto hay que "estirar" la tarjeta (arriba y/o abajo) para que un apilado
+// de insignias muy alto (3 juntas) no quede pegado o tapando la foto/el
+// texto. Con 1 o 2 insignias apiladas casi nunca hace falta estirar nada
+// (entran en el margen que casi cualquier estilo deja libre); con 3 juntas,
+// se agrega justo el espacio que falte.
+
+function computeCornerStretch(corners, H){
+  if(!corners || !corners.stacks) return { top:0, bottom:0 };
+  const stackHeight = (corner)=>{
+    const items = corners.stacks[corner];
+    if(!items || !items.length) return 0;
+    return items.reduce((sum,it)=> sum + it.heightPx, 0) + (items.length-1)*CORNER_STACK_GAP;
+  };
+  const BASE_BUDGET = Math.round(H*0.15);
+  const topH = Math.max(stackHeight("tl"), stackHeight("tr"));
+  const botH = Math.max(stackHeight("bl"), stackHeight("br"));
+  return {
+    top: Math.max(0, topH - BASE_BUDGET),
+    bottom: Math.max(0, botH - BASE_BUDGET)
+  };
+}
+
+// Insignia de "pocas unidades" — solo si el producto tiene stock numérico,
+// mayor que 0 y menor o igual al umbral configurado (por defecto 2).
+
+function drawLowStockBadge(ctx, W, H, product, T){
+  T = T || {};
+  if(!T.lowStockEnabled) return;
+  const qty = product.qty;
+  if(qty === undefined || qty === null || qty === "" || isNaN(qty)) return;
+  const q = Number(qty);
+  const threshold = T.lowStockThreshold !== undefined ? T.lowStockThreshold : 2;
+  if(q <= 0 || q > threshold) return;
+  const text = q === 1 ? "¡ÚLTIMA UNIDAD!" : `¡SOLO ${q} UNIDADES!`;
+  const corner = (_cardCorners && _cardCorners.lowStock) ? _cardCorners.lowStock : (T.lowStockPos || "tr");
+  const stackOffset = (_cardCorners && _cardCorners.lowStockOffset) || 0;
+  drawCornerBadge(ctx, W, H, text, "#c2620a", corner, 0.86, stackOffset);
+}
+
+// Un producto está "en oferta" si tiene un precio anterior mayor al actual.
+
+function drawOfertaBadge(ctx, W, H, product, T){
+  if(!isOnSale(product)) return;
+  const op = Number(product.oldPrice);
+  const p2 = Number(product.price);
+  const pct = Math.round((1 - p2/op) * 100);
+  let text;
+  if(product.promoLabel && product.promoLabel.trim()){
+    text = product.promoLabel.trim().toUpperCase();
+  }else{
+    text = pct > 0 ? `OFERTA -${pct}%` : "OFERTA";
+  }
+  let pos;
+  if(_cardCorners && _cardCorners.oferta){
+    pos = _cardCorners.oferta;
+  }else if(T && T.ofertaPos && T.ofertaPos !== "auto"){
+    pos = T.ofertaPos;
+  }else{
+    pos = (T && T.lowStockPos === "tl") ? "tr" : "tl";
+  }
+  drawCornerBadge(ctx, W, H, text, "#dc2626", pos, 0.86, (_cardCorners && _cardCorners.ofertaOffset) || 0);
+}
+
+// Pastillas de "colores disponibles": un punto de color por cada variante que
+// José cargó en el producto, con su nombre debajo, apiladas junto a la insignia
+// de OFERTA (misma esquina, automáticamente, para que no se tapen entre sí).
+
+function drawPromoFrame(ctx, W, H, product, cfg, frameStyle){
+  const onSale = isOnSale(product);
+  const urgent = !!(product.urgencyLabel && product.urgencyLabel.trim());
+  if(!onSale && !urgent) return;
+  if(!frameStyle || frameStyle === "ninguno") return;
+  const color = "#dc2626";
+  const label = (product.promoLabel && product.promoLabel.trim())
+    ? product.promoLabel.trim().toUpperCase()
+    : (urgent ? product.urgencyLabel.trim().toUpperCase() : "OFERTA");
+
+  if(frameStyle === "borde"){
+    ctx.save();
+    const m = Math.round(W*0.02);
+    const lw = Math.max(6, Math.round(W*0.013));
+    ctx.strokeStyle = color;
+    ctx.lineWidth = lw;
+    roundRect(ctx, m, m, W-m*2, H-m*2, Math.round(W*0.028));
+    ctx.stroke();
+    ctx.strokeStyle = "rgba(255,255,255,0.8)";
+    ctx.lineWidth = Math.max(2, Math.round(W*0.0035));
+    const m2 = m + lw + Math.round(W*0.007);
+    roundRect(ctx, m2, m2, W-m2*2, H-m2*2, Math.round(W*0.02));
+    ctx.stroke();
+    ctx.restore();
+    return;
+  }
+
+  if(frameStyle === "cinta"){
+    ctx.save();
+    const size = Math.round(Math.max(W,H)*0.62);
+    ctx.translate(size*0.02, size*0.02);
+    ctx.rotate(-Math.PI/4);
+    const bandH = Math.round(W*0.09);
+    ctx.shadowColor = "rgba(0,0,0,0.4)"; ctx.shadowBlur = 12; ctx.shadowOffsetY = 3;
+    ctx.fillStyle = color;
+    ctx.fillRect(-size*0.15, 0, size, bandH);
+    ctx.shadowColor = "transparent";
+    ctx.strokeStyle = "rgba(255,255,255,0.85)";
+    ctx.lineWidth = Math.max(2, Math.round(bandH*0.06));
+    ctx.strokeRect(-size*0.15+ctx.lineWidth, ctx.lineWidth, size-ctx.lineWidth*2, bandH-ctx.lineWidth*2);
+    let fontSize = Math.round(bandH*0.46);
+    ctx.font = "800 " + fontSize + "px " + FONT_DISPLAY;
+    while(ctx.measureText(label).width > size*0.82 && fontSize > 14){
+      fontSize -= 2; ctx.font = "800 " + fontSize + "px " + FONT_DISPLAY;
+    }
+    ctx.fillStyle = "#ffffff";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(label, -size*0.15+size/2, bandH/2+1);
+    ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+    ctx.restore();
+    return;
+  }
+
+  if(frameStyle === "franja"){
+    ctx.save();
+    const bandH = Math.round(H*0.078);
+    ctx.shadowColor = "rgba(0,0,0,0.4)"; ctx.shadowBlur = 12; ctx.shadowOffsetY = 3;
+    ctx.fillStyle = color;
+    ctx.fillRect(0, 0, W, bandH);
+    ctx.shadowColor = "transparent";
+    let fontSize = Math.round(bandH*0.5);
+    ctx.font = "800 " + fontSize + "px " + FONT_DISPLAY;
+    while(ctx.measureText(label).width > W*0.88 && fontSize > 16){
+      fontSize -= 2; ctx.font = "800 " + fontSize + "px " + FONT_DISPLAY;
+    }
+    ctx.fillStyle = "#ffffff";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(label, W/2, bandH/2+2);
+    ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+    ctx.restore();
+  }
+}
+
+// Insignia de urgencia ("¡Solo hoy!", "¡Últimas horas!"): texto libre que José
+// escribe por producto. Va en la esquina opuesta a las demás insignias (abajo a
+// la izquierda) para no chocar con "pocas unidades" (arriba) ni el precio.
+
+function drawUrgencyBadge(ctx, W, H, product, T){
+  const text = product.urgencyLabel && product.urgencyLabel.trim();
+  if(!text) return;
+  const corner = (_cardCorners && _cardCorners.urgency) ? _cardCorners.urgency : "bl";
+  drawCornerBadge(ctx, W, H, text.toUpperCase(), "#7e22ce", corner, 0.8, (_cardCorners && _cardCorners.urgencyOffset) || 0);
+}
+
+// Tarjeta de COMBO: junta 2 o 3 fotos de producto lado a lado con un precio
+// combinado, mostrando cuánto se ahorra respecto a comprarlos por separado.
+// Se dibuja aparte (no reusa los estilos normales) porque su composición es
+// distinta: varias fotos en vez de una sola.
+/* ---- Temas visuales para las tarjetas de combo. Cada tema define fondo,
+   colores de texto y estilo del sello, reutilizando el mismo layout de fotos
+   (salvo "apilado" y "grid", que tienen su propio acomodo de fotos). ---- */
+
+function drawWatermark(ctx, W, H, cfg){
+  const text = (cfg.watermarkText && cfg.watermarkText.trim()) || cfg.storeName || "Mi Tienda";
+  if(!text) return;
+  const opacity = cfg.watermarkOpacity || 0.14;
+  const sizeMult = cfg.watermarkSize || 1;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, 0, W, H);
+  ctx.clip();
+  ctx.fillStyle = `rgba(255,255,255,${opacity})`;
+  ctx.strokeStyle = `rgba(0,0,0,${opacity * 0.5})`;
+  ctx.lineWidth = 1.5;
+  const fontPx = Math.round(46 * sizeMult);
+  ctx.font = `800 ${fontPx}px ${FONT_DISPLAY}`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  const label = text.toUpperCase();
+  const stepX = ctx.measureText(label).width + 220 * sizeMult;
+  const stepY = 320 * sizeMult;
+  const diag = Math.sqrt(W*W + H*H);
+  ctx.translate(W/2, H/2);
+  ctx.rotate(-Math.PI / 6.5); // ~ -27.7deg, similar al de la foto de referencia
+  for(let y = -diag; y < diag; y += stepY){
+    for(let x = -diag; x < diag; x += stepX){
+      ctx.strokeText(label, x, y);
+      ctx.fillText(label, x, y);
+    }
+  }
+  ctx.restore();
+}
+
+
+function drawOutOfStockRibbon(ctx, W, H, T){
+  T = T || {};
+  const scale = T.ribbonScale || 1;
+  const pos = T.ribbonPos || "diagonal";
+  const text = "AGOTADO";
+
+  if(pos === "top"){
+    // franja horizontal, sin rotar, arriba de toda la tarjeta
+    ctx.save();
+    const bandH = Math.round(H * 0.12 * scale);
+    ctx.shadowColor = "rgba(0,0,0,0.5)"; ctx.shadowBlur = 18; ctx.shadowOffsetY = 4;
+    ctx.fillStyle = "#dc2626";
+    ctx.fillRect(0, 0, W, bandH);
+    ctx.shadowColor = "transparent";
+    ctx.strokeStyle = "rgba(255,255,255,0.85)";
+    const lw = Math.max(2, Math.round(bandH*0.06));
+    ctx.lineWidth = lw;
+    ctx.strokeRect(lw/2, lw/2, W-lw, bandH-lw);
+    let fontSize = Math.round(bandH*0.55);
+    ctx.font = "800 " + fontSize + "px " + FONT_DISPLAY;
+    while(ctx.measureText(text).width > W*0.88 && fontSize > 18){
+      fontSize -= 3; ctx.font = "800 " + fontSize + "px " + FONT_DISPLAY;
+    }
+    ctx.fillStyle = "#ffffff";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    try{ ctx.letterSpacing = Math.round(fontSize*0.08) + "px"; }catch(e){}
+    ctx.fillText(text, W/2, bandH/2 + 2);
+    try{ ctx.letterSpacing = "0px"; }catch(e){}
+    ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+    ctx.restore();
+    return;
+  }
+
+  if(pos.indexOf("corner-") === 0){
+    drawCornerBadge(ctx, W, H, text, "#dc2626", pos.replace("corner-",""), scale);
+    return;
+  }
+
+  if(pos === "cover"){
+    // oscurece toda la tarjeta (foto + info) y pone el texto "AGOTADO" al centro,
+    // SIN banda roja de fondo, para que el producto se siga distinguiendo debajo
+    // del oscurecido (como en la referencia del usuario).
+    ctx.save();
+    ctx.fillStyle = "rgba(15,15,15,0.62)";
+    ctx.fillRect(0, 0, W, H);
+    ctx.restore();
+
+    ctx.save();
+    ctx.translate(W/2, H/2);
+    let fontSize = Math.round(H * 0.09 * scale);
+    ctx.font = "800 " + fontSize + "px " + FONT_DISPLAY;
+    while(ctx.measureText(text).width > W*0.86 && fontSize > 18){
+      fontSize -= 3;
+      ctx.font = "800 " + fontSize + "px " + FONT_DISPLAY;
+    }
+    ctx.shadowColor = "rgba(0,0,0,0.65)"; ctx.shadowBlur = 14; ctx.shadowOffsetY = 3;
+    ctx.fillStyle = "#ffffff";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    try{ ctx.letterSpacing = Math.round(fontSize*0.06) + "px"; }catch(e){}
+    ctx.fillText(text, 0, 0);
+    try{ ctx.letterSpacing = "0px"; }catch(e){}
+    ctx.shadowColor = "transparent";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "alphabetic";
+    ctx.restore();
+    return;
+  }
+
+  // "diagonal" (comportamiento clásico): banda diagonal grande en la mitad
+  // inferior de la tarjeta (zona de la foto), para no tapar nunca el nombre.
+  ctx.save();
+  ctx.translate(W/2, H*0.56);
+  ctx.rotate(-Math.PI/10);
+  const bandW = Math.max(W, H) * 1.6;
+  const bandH = Math.round(H * 0.155 * scale);
+  ctx.shadowColor = "rgba(0,0,0,0.55)"; ctx.shadowBlur = 26; ctx.shadowOffsetY = 8;
+  ctx.fillStyle = "#dc2626";
+  ctx.fillRect(-bandW/2, -bandH/2, bandW, bandH);
+  ctx.shadowColor = "transparent";
+  ctx.strokeStyle = "rgba(255,255,255,0.85)";
+  ctx.lineWidth = Math.round(bandH*0.045);
+  ctx.strokeRect(-bandW/2 + ctx.lineWidth, -bandH/2 + ctx.lineWidth, bandW - ctx.lineWidth*2, bandH - ctx.lineWidth*2);
+
+  let fontSize = Math.round(bandH*0.62);
+  ctx.font = "800 " + fontSize + "px " + FONT_DISPLAY;
+  // si la fuente es muy ancha (ej. Arial Black / manuscrita), reducimos hasta que quepa con margen
+  while(ctx.measureText(text).width > bandW*0.9 && fontSize > 20){
+    fontSize -= 4;
+    ctx.font = "800 " + fontSize + "px " + FONT_DISPLAY;
+  }
+  ctx.fillStyle = "#ffffff";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  try{ ctx.letterSpacing = Math.round(fontSize*0.06) + "px"; }catch(e){}
+  ctx.fillText(text, 3, 3);
+  try{ ctx.letterSpacing = "0px"; }catch(e){}
+  ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
+  ctx.restore();
+}
+
+// Insignia compacta reutilizable para colocar en una esquina (AGOTADO chico o Pocas unidades)
+
+function isOutOfStock(p){
+  return p.qty !== undefined && p.qty !== null && !isNaN(p.qty) && p.qty <= 0;
+}
+
+
+
+function drawFramedPhoto(ctx, img, x, y, w, h, radius){
+  ctx.save();
+  ctx.shadowColor = "rgba(0,0,0,0.5)"; ctx.shadowBlur = 22; ctx.shadowOffsetY = 8;
+  ctx.fillStyle = "#ffffff";
+  roundRect(ctx, x, y, w, h, radius);
+  ctx.fill();
+  ctx.restore();
+  const inset = Math.max(6, Math.min(w,h)*0.032);
+  ctx.save();
+  roundRect(ctx, x+inset, y+inset, w-inset*2, h-inset*2, Math.max(4, radius-4));
+  ctx.clip();
+  drawImageCover(ctx, img, x+inset, y+inset, w-inset*2, h-inset*2);
+  ctx.restore();
+}
+
+/* Diseño 1 — CASCADA: cada foto se monta sobre la anterior, alternando hacia
+   una esquina y la otra, con leve inclinación (como en la foto de referencia). */
+
+async function drawCardProtagonista(ctx, W, H, product, img, cfg, accent, pad){
+  const T = getCardTuning(cfg);
+  const OFF = getStyleOffsetsPx(cfg, "protagonista", W, H);
+
+  // ---- fondo difuminado (queda como un marco fino, casi no se nota) ----
+  if(img){
+    ctx.save();
+    try{ ctx.filter = `blur(${Math.round(55*T.blurScale)}px)`; }catch(e){}
+    drawImageCover(ctx, img, -40, -40, W+80, H+80);
+    ctx.filter = "none";
+    ctx.restore();
+    ctx.fillStyle = "rgba(6,10,10,0.30)";
+    ctx.fillRect(0,0,W,H);
+  }else{
+    const bgGrad = ctx.createLinearGradient(0,0,W,H);
+    bgGrad.addColorStop(0, shadeColor(accent, -0.85));
+    bgGrad.addColorStop(1, shadeColor(accent, -0.6));
+    ctx.fillStyle = bgGrad;
+    ctx.fillRect(0,0,W,H);
+  }
+
+  const inset = Math.round(W*0.022); // marco casi imperceptible alrededor de la foto
+  const footerH = Math.round(H * 0.155); // franja compacta abajo: nombre + categoría
+  const photoTop = inset;
+  const photoBottom = H - footerH;
+  const photoBoxW = W - inset*2;
+  const photoBoxH = photoBottom - photoTop;
+
+  // ---- foto del producto, lo más grande posible dentro del marco ----
+  ctx.save(); ctx.translate(OFF.photo.dx, OFF.photo.dy);
+  if(img){
+    const fit = fitContain(img, photoBoxW, photoBoxH);
+    const dx = inset + (photoBoxW - fit.w)/2;
+    const dy = photoTop + (photoBoxH - fit.h)/2;
+    ctx.save();
+    ctx.shadowColor = "rgba(0,0,0,0.5)"; ctx.shadowBlur = 34; ctx.shadowOffsetY = 12;
+    roundRect(ctx, dx, dy, fit.w, fit.h, 20);
+    ctx.fillStyle = "rgba(0,0,0,0.001)";
+    ctx.fill();
+    ctx.restore();
+    ctx.save();
+    roundRect(ctx, dx, dy, fit.w, fit.h, 20);
+    ctx.clip();
+    drawImageWithFocus(ctx, img, dx, dy, fit.w, fit.h, getPhotoFocus(product, cfg));
+    ctx.restore();
+  }else{
+    ctx.fillStyle = "rgba(255,255,255,0.85)";
+    ctx.font = "600 44px " + FONT_BODY;
+    ctx.textAlign = "center";
+    ctx.fillText("📦  Sin foto todavía", W/2, photoTop + photoBoxH/2 + 16);
+    ctx.textAlign = "left";
+  }
+  ctx.restore();
+
+  // ---- logo pequeño, superpuesto arriba-izquierda de la foto ----
+  if(cfg.logo){
+    const logoImg = await loadImg(cfg.logo);
+    if(logoImg){
+      ctx.save(); ctx.translate(OFF.logo.dx, OFF.logo.dy);
+      const logoSize = Math.round(66 * T.logoScale);
+      const lx = inset + 18, ly = photoTop + 18;
+      ctx.save();
+      ctx.shadowColor = "rgba(0,0,0,0.5)"; ctx.shadowBlur = 12;
+      ctx.beginPath(); ctx.arc(lx+logoSize/2, ly+logoSize/2, logoSize/2, 0, Math.PI*2);
+      ctx.fillStyle = "#ffffff"; ctx.fill();
+      ctx.restore();
+      ctx.save();
+      ctx.beginPath(); ctx.arc(lx+logoSize/2, ly+logoSize/2, logoSize/2-3, 0, Math.PI*2); ctx.clip();
+      drawImageCover(ctx, logoImg, lx+3, ly+3, logoSize-6, logoSize-6);
+      ctx.restore();
+      ctx.restore();
+    }
+  }
+
+  // ---- precio, como medallón sobre la esquina de la foto ----
+  ctx.save(); ctx.translate(OFF.price.dx, OFF.price.dy);
+  if(isPriceOverridden(cfg)){
+    drawPriceTagGeneric(ctx, cfg, accent, product, { left: inset, top: photoTop, right: W-inset, bottom: photoBottom });
+  }else{
+    const priceText = priceCurrencyLabel(cfg, product) + " " + formatNumber(product.price);
+    ctx.font = `800 ${Math.round(48*T.priceScale)}px ` + FONT_DISPLAY;
+    const priceW = ctx.measureText(priceText).width;
+    const boxW = priceW + 52, boxH = Math.round(82*T.priceScale);
+    const boxX = W - inset - 18 - boxW, boxY = photoTop + 18;
+    ctx.save();
+    ctx.shadowColor = "rgba(0,0,0,0.4)"; ctx.shadowBlur = 18; ctx.shadowOffsetY = 5;
+    ctx.fillStyle = accent;
+    roundRect(ctx, boxX, boxY, boxW, boxH, boxH/2);
+    ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = "#ffffff";
+    ctx.textBaseline = "middle";
+    ctx.fillText(priceText, boxX + 26, boxY + boxH/2 + 2);
+    ctx.textBaseline = "alphabetic";
+  }
+  ctx.restore();
+
+  // ---- franja compacta abajo: categoría chica + nombre (máx. 2 líneas) ----
+  let ty = photoBottom + Math.round(footerH*0.16);
+  if(cfg.storeName){
+    ctx.save(); ctx.translate(OFF.storeName.dx, OFF.storeName.dy);
+    ctx.fillStyle = "rgba(255,255,255,0.55)";
+    ctx.font = "700 22px " + FONT_DISPLAY;
+    try{ ctx.letterSpacing = "1px"; }catch(e){}
+    ctx.fillText(truncateToWidth(ctx, cfg.storeName.toUpperCase(), W-inset*2), inset+2, ty+16);
+    try{ ctx.letterSpacing = "0px"; }catch(e){}
+    ctx.restore();
+    ty += 34;
+  }
+  if(product.category){
+    ctx.save(); ctx.translate(OFF.category.dx, OFF.category.dy);
+    ctx.font = "700 24px " + FONT_BODY;
+    const catLabel = product.category.toUpperCase();
+    ctx.fillStyle = accentFillStyle(ctx, getProductAccentGradient(product, cfg), accent, inset+2, ty-4, ctx.measureText(catLabel).width, 30);
+    ctx.fillText(catLabel, inset+2, ty+18);
+    ctx.restore();
+    ty += 34;
+  }
+  const nameMaxW = W - inset*2;
+  const nameFit = fitTitleFont(ctx, product.name, nameMaxW, 2, "800", Math.round(44*T.nameScale), FONT_BODY, Math.round(28*T.nameScale));
+  const nameLines = nameFit.lines;
+  ctx.save(); ctx.translate(OFF.name.dx, OFF.name.dy);
+  ctx.fillStyle = "#ffffff";
+  const nameLineH = Math.round(nameFit.size*1.1364);
+  nameLines.forEach((line, i) => {
+    ctx.fillText(line, inset+2, ty + Math.round(nameFit.size*0.8636) + i*nameLineH);
+  });
+  ctx.restore();
+}
+
+
+async function drawCardClasica(ctx, W, H, product, img, cfg, accent, pad){
+
+  const T = getCardTuning(cfg);
+  const OFF = getStyleOffsetsPx(cfg, "clasica", W, H);
+  // ---- fondo de TODA la tarjeta: la misma foto del producto, ampliada y difuminada ----
+  if(img){
+    ctx.save();
+    try{ ctx.filter = `blur(${Math.round(42*T.blurScale)}px)`; }catch(e){}
+    drawImageCover(ctx, img, -40, -40, W+80, H+80);
+    ctx.filter = "none";
+    ctx.restore();
+    ctx.fillStyle = "rgba(6,10,10,0.62)";
+    ctx.fillRect(0,0,W,H);
+  }else{
+    const bgGrad = ctx.createLinearGradient(0,0,W,H);
+    bgGrad.addColorStop(0, shadeColor(accent, -0.88));
+    bgGrad.addColorStop(1, shadeColor(accent, -0.65));
+    ctx.fillStyle = bgGrad;
+    ctx.fillRect(0,0,W,H);
+  }
+  // leve viñeta para que el texto siempre contraste bien
+  const vig = ctx.createRadialGradient(W/2, H*0.35, H*0.25, W/2, H*0.55, H*0.85);
+  vig.addColorStop(0, "rgba(0,0,0,0)");
+  vig.addColorStop(1, "rgba(0,0,0,0.35)");
+  ctx.fillStyle = vig;
+  ctx.fillRect(0,0,W,H);
+
+  const hasHeader = !!(cfg.storeName || cfg.logo);
+  const hasContact = !!(cfg.phone || cfg.address);
+
+  // ---- encabezado: logo + nombre del negocio ----
+  let cursorY = pad;
+  if(hasHeader){
+    const logoSize = Math.round(84 * T.logoScale);
+    let tx = pad;
+    if(cfg.logo){
+      const logoImg = await loadImg(cfg.logo);
+      if(logoImg){
+        ctx.save(); ctx.translate(OFF.logo.dx, OFF.logo.dy);
+        ctx.save();
+        ctx.shadowColor = "rgba(0,0,0,0.4)"; ctx.shadowBlur = 14; ctx.shadowOffsetY = 4;
+        ctx.beginPath();
+        ctx.arc(pad + logoSize/2, cursorY + logoSize/2, logoSize/2, 0, Math.PI*2);
+        ctx.fillStyle = "#ffffff";
+        ctx.fill();
+        ctx.restore();
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(pad + logoSize/2, cursorY + logoSize/2, logoSize/2 - 4, 0, Math.PI*2);
+        ctx.clip();
+        drawImageCover(ctx, logoImg, pad+4, cursorY+4, logoSize-8, logoSize-8);
+        ctx.restore();
+        ctx.restore();
+        tx = pad + logoSize + 22;
+      }
+    }
+    if(cfg.storeName){
+      ctx.save(); ctx.translate(OFF.storeName.dx, OFF.storeName.dy);
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "700 40px " + FONT_DISPLAY;
+      ctx.textBaseline = "middle";
+      ctx.fillText(truncateToWidth(ctx, cfg.storeName, W - tx - pad), tx, cursorY + logoSize/2 + 2);
+      ctx.textBaseline = "alphabetic";
+      ctx.restore();
+    }
+    cursorY += logoSize + 26;
+  }
+
+  // ---- etiqueta de categoría (pill con borde de acento) ----
+  if(product.category){
+    ctx.save(); ctx.translate(OFF.category.dx, OFF.category.dy);
+    const label = product.category.toUpperCase();
+    ctx.font = "700 26px " + FONT_BODY;
+    try{ ctx.letterSpacing = "0.5px"; }catch(e){}
+    const padXBadge = 22;
+    const textW = ctx.measureText(label).width;
+    const boxW = textW + padXBadge*2, boxH = 50;
+    const _catGrad1 = getProductAccentGradient(product, cfg);
+    ctx.save();
+    roundRect(ctx, pad, cursorY, boxW, boxH, boxH/2);
+    ctx.fillStyle = "rgba(255,255,255,0.08)";
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = accentFillStyle(ctx, _catGrad1, accent, pad, cursorY, boxW, boxH);
+    ctx.stroke();
+    ctx.restore();
+    ctx.fillStyle = accentFillStyle(ctx, _catGrad1, accent, pad, cursorY, boxW, boxH);
+    ctx.textBaseline = "middle";
+    ctx.fillText(label, pad+padXBadge, cursorY+boxH/2+1);
+    ctx.textBaseline = "alphabetic";
+    try{ ctx.letterSpacing = "0px"; }catch(e){}
+    ctx.restore();
+    cursorY += boxH + 22;
+  }else{
+    cursorY += 6;
+  }
+
+  // ---- nombre del producto: en blanco, última palabra en color de acento, con subrayado ----
+  const titleMaxW = W - pad*2;
+  const titleFit = fitTitleFont(ctx, product.name, titleMaxW, 3, "800", Math.round(60*T.nameScale), FONT_BODY, Math.round(36*T.nameScale));
+  const titleLines = titleFit.lines;
+  const titleLineHeight = Math.round(titleFit.size*1.1333);
+  const titleTop = cursorY;
+  ctx.save(); ctx.translate(OFF.name.dx, OFF.name.dy);
+  titleLines.forEach((line, i)=>{
+    const y = titleTop + i*titleLineHeight + titleLineHeight*0.78;
+    drawLineWithLastWordAccent(ctx, line, pad, y, "#ffffff", accent, i === titleLines.length-1);
+  });
+  const titleBottom0 = titleTop + titleLines.length*titleLineHeight + 6;
+  // subrayado corto bajo la primera palabra del título
+  const firstWord = titleLines[0].split(" ")[0];
+  const underlineW = ctx.measureText(firstWord).width;
+  ctx.fillStyle = accent;
+  ctx.fillRect(pad, titleBottom0 - 2, Math.max(60, underlineW), 5);
+  ctx.restore();
+  const titleBottom = titleTop + titleLines.length*titleLineHeight + 6;
+
+  const photoTop = titleBottom + 30;
+
+  // ---- zona reservada abajo para precio y datos de contacto ----
+  const footerZone = hasContact ? 190 : 130;
+  const photoBottom = H - footerZone;
+  const photoBoxH = Math.max(120, photoBottom - photoTop);
+
+  // ---- foto real del producto (llena el marco; recorte/zoom ajustables) ----
+  ctx.save(); ctx.translate(OFF.photo.dx, OFF.photo.dy);
+  if(img){
+    const inset = 20;
+    const boxX = pad + inset, boxY = photoTop + inset, boxW = W - pad*2 - inset*2, boxH = photoBoxH - inset*2;
+    ctx.save();
+    ctx.shadowColor = "rgba(0,0,0,0.55)"; ctx.shadowBlur = 40; ctx.shadowOffsetY = 16;
+    ctx.beginPath();
+    roundRect(ctx, boxX, boxY, boxW, boxH, 16);
+    ctx.fillStyle = "rgba(0,0,0,0.001)";
+    ctx.fill();
+    ctx.restore();
+    ctx.save();
+    roundRect(ctx, boxX, boxY, boxW, boxH, 16);
+    ctx.clip();
+    // ---- se muestra la foto completa (sin recortar), centrada en el marco;
+    //      solo se recorta/hace zoom si el usuario lo ajustó a mano para este producto ----
+    const fit = fitContain(img, boxW, boxH);
+    const dx = boxX + (boxW - fit.w)/2, dy = boxY + (boxH - fit.h)/2;
+    drawImageWithFocus(ctx, img, dx, dy, fit.w, fit.h, getPhotoFocus(product, cfg));
+    ctx.restore();
+  }else{
+    ctx.fillStyle = "rgba(255,255,255,0.85)";
+    ctx.font = "600 40px " + FONT_BODY;
+    ctx.textAlign = "center";
+    ctx.fillText("📦  Sin foto todavía", W/2, photoTop + photoBoxH/2 + 14);
+    ctx.textAlign = "left";
+  }
+  ctx.restore();
+
+  // ---- medallón de precio, tipo "sticker", en la esquina inferior derecha ----
+  ctx.save(); ctx.translate(OFF.price.dx, OFF.price.dy);
+  if(isPriceOverridden(cfg)){
+    drawPriceTagGeneric(ctx, cfg, accent, product, { left: pad, top: photoTop, right: W-pad, bottom: photoBottom });
+  }else{
+    const priceText = priceCurrencyLabel(cfg, product) + " " + formatNumber(product.price);
+    ctx.font = `800 ${Math.round(30*T.priceScale)}px ` + FONT_DISPLAY;
+    const labelW = ctx.measureText("PRECIO").width;
+    ctx.font = `800 ${Math.round(66*T.priceScale)}px ` + FONT_DISPLAY;
+    const priceW = ctx.measureText(priceText).width;
+    const boxW = Math.max(labelW, priceW) + 56;
+    const boxH = Math.round(150*T.priceScale);
+    const boxX = W - pad - boxW;
+    const boxY = H - pad - boxH;
+    ctx.save();
+    ctx.shadowColor = "rgba(0,0,0,0.45)"; ctx.shadowBlur = 26; ctx.shadowOffsetY = 10;
+    ctx.fillStyle = "#ffffff";
+    roundRect(ctx, boxX, boxY, boxW, boxH, 20);
+    ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = accent;
+    ctx.font = `800 ${Math.round(28*T.priceScale)}px ` + FONT_DISPLAY;
+    try{ ctx.letterSpacing = "1px"; }catch(e){}
+    ctx.fillText("PRECIO", boxX + 28, boxY + Math.round(46*T.priceScale));
+    try{ ctx.letterSpacing = "0px"; }catch(e){}
+    ctx.fillStyle = "#111417";
+    ctx.font = `800 ${Math.round(66*T.priceScale)}px ` + FONT_DISPLAY;
+    ctx.fillText(priceText, boxX + 28, boxY + Math.round(118*T.priceScale));
+  }
+  ctx.restore();
+
+  // ---- pie de contacto (teléfono / dirección), abajo a la izquierda ----
+  if(hasContact){
+    ctx.save(); ctx.translate(OFF.contact.dx, OFF.contact.dy);
+    const contactMaxW = W - pad*2 - 260;
+    let ty = H - pad - 8;
+    if(cfg.address){
+      ctx.fillStyle = "rgba(255,255,255,0.92)";
+      ctx.font = `600 ${Math.round(30*T.contactScale)}px ` + FONT_DISPLAY;
+      ctx.fillText(truncateToWidth(ctx, "📍 " + cfg.address, contactMaxW), pad, ty);
+      ty -= 50;
+    }
+    if(cfg.phone){
+      const circleR = 26;
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(pad + circleR, ty - 20, circleR, 0, Math.PI*2);
+      ctx.fillStyle = accent;
+      ctx.fill();
+      ctx.restore();
+      ctx.font = `${Math.round(26*T.contactScale)}px ` + FONT_BODY;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = "#ffffff";
+      ctx.fillText("📞", pad + circleR, ty - 19);
+      ctx.textAlign = "left";
+      ctx.textBaseline = "alphabetic";
+      ctx.font = `700 ${Math.round(36*T.contactScale)}px ` + FONT_DISPLAY;
+      ctx.fillText(truncateToWidth(ctx, cfg.phone, contactMaxW - circleR*2 - 10), pad + circleR*2 + 16, ty - 8);
+    }
+    ctx.restore();
+  }
+}
+
+/* ---- Estilo MOSAICO: varias fotos del mismo producto (variantes de color/tamaño,
+   por ejemplo) apiladas en marcos blancos dentro de una sola tarjeta, inspirado en
+   las imágenes tipo collage que se usan en tiendas online. Usa la foto principal +
+   las fotos adicionales que se hayan cargado para el producto (hasta 4 en total). ---- */
+/* Dibuja una foto dentro de un marco blanco con sombra, recortada para llenar
+   el marco (cover). Lo usan los 3 diseños de mosaico de abajo. */
+
+async function drawCardMinimal(ctx, W, H, product, img, cfg, accent, pad){
+  const T = getCardTuning(cfg);
+  ctx.fillStyle = "#f4f5f7";
+  ctx.fillRect(0,0,W,H);
+
+  const hasHeader = !!(cfg.storeName || cfg.logo);
+  const hasContact = !!(cfg.phone || cfg.address);
+
+  let cursorY = pad;
+  if(hasHeader){
+    const logoSize = Math.round(76 * T.logoScale);
+    let tx = pad;
+    if(cfg.logo){
+      const logoImg = await loadImg(cfg.logo);
+      if(logoImg){
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(pad + logoSize/2, cursorY + logoSize/2, logoSize/2, 0, Math.PI*2);
+        ctx.clip();
+        drawImageCover(ctx, logoImg, pad, cursorY, logoSize, logoSize);
+        ctx.restore();
+        tx = pad + logoSize + 20;
+      }
+    }
+    ctx.fillStyle = "#111417";
+    ctx.font = "700 36px " + FONT_DISPLAY;
+    ctx.textBaseline = "middle";
+    ctx.fillText(truncateToWidth(ctx, cfg.storeName || "", W - tx - pad), tx, cursorY + logoSize/2);
+    ctx.textBaseline = "alphabetic";
+    cursorY += logoSize + 30;
+  }
+
+  if(product.category){
+    const label = product.category.toUpperCase();
+    ctx.font = "700 24px " + FONT_BODY;
+    ctx.fillStyle = accentFillStyle(ctx, getProductAccentGradient(product, cfg), accent, pad, cursorY, ctx.measureText(label).width, 30);
+    try{ ctx.letterSpacing = "1px"; }catch(e){}
+    ctx.fillText(label, pad, cursorY + 24);
+    try{ ctx.letterSpacing = "0px"; }catch(e){}
+    cursorY += 46;
+  }
+
+  // ---- caja blanca con la foto ----
+  const footerZone = hasContact ? 175 : 130;
+  const photoBoxH = H - footerZone - cursorY - 30;
+  ctx.save();
+  ctx.shadowColor = "rgba(17,20,23,0.10)"; ctx.shadowBlur = 30; ctx.shadowOffsetY = 10;
+  ctx.fillStyle = "#ffffff";
+  roundRect(ctx, pad, cursorY, W - pad*2, photoBoxH, 24);
+  ctx.fill();
+  ctx.restore();
+
+  if(img){
+    const inset = 24;
+    const fit = fitContain(img, W - pad*2 - inset*2, photoBoxH - inset*2);
+    const dx = pad + ((W-pad*2) - fit.w)/2, dy = cursorY + (photoBoxH - fit.h)/2;
+    ctx.save();
+    roundRect(ctx, dx, dy, fit.w, fit.h, 14);
+    ctx.clip();
+    drawImageWithFocus(ctx, img, dx, dy, fit.w, fit.h, getPhotoFocus(product, cfg));
+    ctx.restore();
+  }else{
+    ctx.fillStyle = "#9aa3b2";
+    ctx.font = "600 36px " + FONT_BODY;
+    ctx.textAlign = "center";
+    ctx.fillText("📦  Sin foto todavía", W/2, cursorY + photoBoxH/2 + 12);
+    ctx.textAlign = "left";
+  }
+
+  let ny = cursorY + photoBoxH + 46;
+  const titleFit = fitTitleFont(ctx, product.name, W - pad*2, 2, "800", Math.round(52*T.nameScale), FONT_BODY, Math.round(32*T.nameScale));
+  const titleLines = titleFit.lines;
+  ctx.fillStyle = "#111417";
+  const nameLineH = Math.round(titleFit.size*1.1154);
+  titleLines.forEach((line,i)=>{ ctx.fillText(line, pad, ny + i*nameLineH); });
+  ny += titleLines.length*nameLineH + 10;
+
+  if(isPriceOverridden(cfg)){
+    drawPriceTagGeneric(ctx, cfg, accent, product, { left: pad, top: cursorY, right: W-pad, bottom: cursorY+photoBoxH });
+  }else{
+    const priceText = priceCurrencyLabel(cfg, product) + " " + formatNumber(product.price);
+    ctx.font = `800 ${Math.round(54*T.priceScale)}px ` + FONT_DISPLAY;
+    ctx.fillStyle = accent;
+    ctx.fillText(priceText, pad, ny + 14);
+  }
+
+  if(hasContact){
+    const bits = [cfg.phone ? "📞 " + cfg.phone : "", cfg.address ? "📍 " + cfg.address : ""].filter(Boolean).join("    ");
+    ctx.fillStyle = "#5b6472";
+    ctx.font = `500 ${Math.round(26*T.contactScale)}px ` + FONT_BODY;
+    ctx.fillText(truncateToWidth(ctx, bits, W - pad*2), pad, H - pad + 4);
+  }
+}
+
+/* ---- Estilo FRANJA LATERAL: banda de color a la izquierda con marca, foto y precio a la derecha ---- */
+
+async function drawCardFranja(ctx, W, H, product, img, cfg, accent, pad){
+  const T = getCardTuning(cfg);
+  ctx.fillStyle = "#12161f";
+  ctx.fillRect(0,0,W,H);
+
+  const bandW = Math.round(W * 0.30);
+  ctx.fillStyle = accent;
+  ctx.fillRect(0,0,bandW,H);
+
+  const innerPad = 40;
+  let by = pad;
+  if(cfg.logo){
+    const logoImg = await loadImg(cfg.logo);
+    if(logoImg){
+      const size = Math.round(96 * T.logoScale);
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(innerPad + size/2, by + size/2, size/2, 0, Math.PI*2);
+      ctx.fillStyle = "#ffffff";
+      ctx.fill();
+      ctx.clip();
+      drawImageCover(ctx, logoImg, innerPad+4, by+4, size-8, size-8);
+      ctx.restore();
+      by += size + 24;
+    }
+  }
+  ctx.fillStyle = "#ffffff";
+  const storeFont = "800 40px " + FONT_DISPLAY;
+  ctx.font = storeFont;
+  const storeLines = getWrappedLines(ctx, cfg.storeName || "", bandW - innerPad*2, 3, storeFont);
+  storeLines.forEach((line,i)=>{ ctx.fillText(line, innerPad, by + 40 + i*46); });
+  by += storeLines.length*46 + 30;
+
+  if(product.category){
+    ctx.font = "700 24px " + FONT_BODY;
+    ctx.fillStyle = "rgba(255,255,255,0.85)";
+    try{ ctx.letterSpacing = "0.5px"; }catch(e){}
+    const catLines = getWrappedLines(ctx, product.category.toUpperCase(), bandW - innerPad*2, 3, "700 24px " + FONT_BODY);
+    catLines.forEach((line,i)=>{ ctx.fillText(line, innerPad, by + i*32); });
+    try{ ctx.letterSpacing = "0px"; }catch(e){}
+    by += catLines.length*32 + 20;
+  }
+
+  if(cfg.phone || cfg.address){
+    ctx.fillStyle = "rgba(255,255,255,0.85)";
+    ctx.font = `500 ${Math.round(22*T.contactScale)}px ` + FONT_BODY;
+    let cy = H - pad - 60;
+    if(cfg.address){
+      const addrLines = getWrappedLines(ctx, "📍 " + cfg.address, bandW - innerPad*2, 2, `500 ${Math.round(22*T.contactScale)}px ` + FONT_BODY);
+      addrLines.forEach((line,i)=>{ ctx.fillText(line, innerPad, cy + i*28); });
+      cy += addrLines.length*28 + 8;
+    }
+    if(cfg.phone){
+      ctx.fillText(truncateToWidth(ctx, "📞 " + cfg.phone, bandW - innerPad*2), innerPad, cy);
+    }
+  }
+
+  // ---- lado derecho: foto + nombre + precio ----
+  const rightX = bandW + 40;
+  const rightW = W - bandW - 40 - pad;
+
+  const titleFit = fitTitleFont(ctx, product.name, rightW, 3, "800", Math.round(54*T.nameScale), FONT_BODY, Math.round(32*T.nameScale));
+  const titleLines = titleFit.lines;
+  ctx.fillStyle = "#ffffff";
+  let ty = pad + 50;
+  const franjaLineH = Math.round(titleFit.size*1.1111);
+  titleLines.forEach((line,i)=>{ ctx.fillText(line, rightX, ty + i*franjaLineH); });
+  const titleBottom = ty + titleLines.length*franjaLineH + 20;
+
+  const footerH = 160;
+  const photoTop = titleBottom + 20;
+  const photoBoxH = H - footerH - photoTop;
+
+  if(img){
+    const fit = fitContain(img, rightW, Math.max(120, photoBoxH));
+    const dx = rightX + (rightW - fit.w)/2, dy = photoTop + (Math.max(120,photoBoxH) - fit.h)/2;
+    ctx.save();
+    ctx.shadowColor = "rgba(0,0,0,0.5)"; ctx.shadowBlur = 30; ctx.shadowOffsetY = 12;
+    roundRect(ctx, dx, dy, fit.w, fit.h, 16);
+    ctx.clip();
+    drawImageWithFocus(ctx, img, dx, dy, fit.w, fit.h, getPhotoFocus(product, cfg));
+    ctx.restore();
+  }else{
+    ctx.fillStyle = "rgba(255,255,255,0.7)";
+    ctx.font = "600 36px " + FONT_BODY;
+    ctx.textAlign = "center";
+    ctx.fillText("📦  Sin foto todavía", rightX + rightW/2, photoTop + Math.max(120,photoBoxH)/2 + 12);
+    ctx.textAlign = "left";
+  }
+
+  const priceText = priceCurrencyLabel(cfg, product) + " " + formatNumber(product.price);
+  if(isPriceOverridden(cfg)){
+    drawPriceTagGeneric(ctx, cfg, accent, product, { left: rightX, top: photoTop, right: rightX+rightW, bottom: photoTop+Math.max(120,photoBoxH) });
+  }else{
+    ctx.font = `800 ${Math.round(58*T.priceScale)}px ` + FONT_DISPLAY;
+    const priceW = ctx.measureText(priceText).width;
+    const boxW = priceW + 60, boxH = Math.round(100*T.priceScale);
+    const boxX = rightX, boxY = H - pad - boxH;
+    ctx.save();
+    ctx.shadowColor = "rgba(0,0,0,0.4)"; ctx.shadowBlur = 20; ctx.shadowOffsetY = 8;
+    ctx.fillStyle = "#ffffff";
+    roundRect(ctx, boxX, boxY, boxW, boxH, 18);
+    ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = accent;
+    ctx.fillText(priceText, boxX + 30, boxY + Math.round(66*T.priceScale));
+  }
+}
+
+/* ---- Estilo DIVIDIDA: foto a sangre en un lado y toda la información en un
+   panel claro al otro lado, con una franja de contacto a todo el ancho
+   abajo — como una tarjeta/flyer de producto. ---- */
+
+async function drawCardDividida(ctx, W, H, product, img, cfg, accent, pad){
+  const T = getCardTuning(cfg);
+  const hasContact = !!(cfg.phone || cfg.storeName);
+  const footerH = hasContact ? Math.round(H*0.086) : 0;
+  const bodyH = H - footerH;
+  const leftW = Math.round(W * 0.46);
+  const rightX = leftW;
+  const rightW = W - leftW;
+  const innerPad = 48;
+
+  // panel claro a la derecha
+  ctx.fillStyle = "#fbfaf6";
+  ctx.fillRect(rightX, 0, rightW, bodyH);
+
+  // foto a sangre, lado izquierdo
+  if(img){
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0,0,leftW,bodyH);
+    ctx.clip();
+    drawImageWithFocus(ctx, img, 0, 0, leftW, bodyH, getPhotoFocus(product, cfg));
+    ctx.restore();
+  }else{
+    ctx.fillStyle = "#e6e2d8";
+    ctx.fillRect(0,0,leftW,bodyH);
+    ctx.fillStyle = "#9aa3b2";
+    ctx.font = "600 32px " + FONT_BODY;
+    ctx.textAlign = "center";
+    ctx.fillText("📦  Sin foto todavía", leftW/2, bodyH/2 + 12);
+    ctx.textAlign = "left";
+  }
+
+  // insignia circular con el logo, montada sobre la esquina superior de la foto
+  if(cfg.logo){
+    const logoImg = await loadImg(cfg.logo);
+    if(logoImg){
+      const size = Math.round(96 * T.logoScale);
+      const cx = 34 + size/2, cyLogo = 34 + size/2;
+      ctx.save();
+      ctx.shadowColor = "rgba(0,0,0,0.35)"; ctx.shadowBlur = 16; ctx.shadowOffsetY = 4;
+      ctx.beginPath();
+      ctx.arc(cx, cyLogo, size/2 + 6, 0, Math.PI*2);
+      ctx.fillStyle = "#ffffff";
+      ctx.fill();
+      ctx.restore();
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(cx, cyLogo, size/2, 0, Math.PI*2);
+      ctx.clip();
+      drawImageCover(ctx, logoImg, cx-size/2, cyLogo-size/2, size, size);
+      ctx.restore();
+    }
+  }
+
+  // ---- panel derecho: categoría, nombre, precio ----
+  let cy = pad;
+  if(product.category){
+    const label = product.category.toUpperCase();
+    ctx.font = "700 24px " + FONT_BODY;
+    ctx.fillStyle = accentFillStyle(ctx, getProductAccentGradient(product, cfg), accent, rightX+innerPad, cy, ctx.measureText(label).width, 30);
+    try{ ctx.letterSpacing = "1.5px"; }catch(e){}
+    ctx.fillText(truncateToWidth(ctx, label, rightW - innerPad*2), rightX + innerPad, cy + 24);
+    try{ ctx.letterSpacing = "0px"; }catch(e){}
+    cy += 46;
+  }
+
+  const titleFit = fitTitleFont(ctx, product.name, rightW - innerPad*2, 4, "800", Math.round(56*T.nameScale), FONT_BODY, Math.round(30*T.nameScale));
+  const lineH = Math.round(titleFit.size*1.14);
+  ctx.fillStyle = "#161a14";
+  cy += titleFit.size;
+  titleFit.lines.forEach((line,i)=>{ ctx.fillText(line, rightX + innerPad, cy + i*lineH); });
+  cy += (titleFit.lines.length-1)*lineH + 34;
+
+  ctx.strokeStyle = rgba(accent, 0.45);
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(rightX + innerPad, cy);
+  ctx.lineTo(rightX + innerPad + Math.min(140, rightW - innerPad*2), cy);
+  ctx.stroke();
+
+  const priceZoneTop = Math.max(cy + 30, bodyH - Math.round(220*T.priceScale));
+  if(isPriceOverridden(cfg)){
+    drawPriceTagGeneric(ctx, cfg, accent, product, { left: rightX+innerPad, top: priceZoneTop, right: W-pad, bottom: bodyH-pad });
+  }else{
+    let py = priceZoneTop + 30;
+    if(isOnSale(product)){
+      const oldText = priceCurrencyLabel(cfg, product) + " " + formatNumber(product.oldPrice);
+      ctx.font = "600 30px " + FONT_BODY;
+      ctx.fillStyle = "#9a9488";
+      ctx.fillText(oldText, rightX + innerPad, py);
+      const tw = ctx.measureText(oldText).width;
+      ctx.strokeStyle = "#9a9488"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(rightX+innerPad, py-11); ctx.lineTo(rightX+innerPad+tw, py-11); ctx.stroke();
+      py += 56;
+    }
+    const priceText = priceCurrencyLabel(cfg, product) + " " + formatNumber(product.price);
+    ctx.font = `800 ${Math.round(72*T.priceScale)}px ` + FONT_DISPLAY;
+    ctx.fillStyle = accent;
+    ctx.fillText(priceText, rightX + innerPad, py + 50);
+    py += Math.round(78*T.priceScale);
+    if(product.unit && UNIT_LABELS[product.unit]){
+      ctx.font = "700 26px " + FONT_BODY;
+      ctx.fillStyle = "#6b6558";
+      ctx.fillText("por " + UNIT_LABELS[product.unit], rightX + innerPad, py + 30);
+    }
+  }
+
+  // ---- franja de contacto, a todo el ancho, abajo ----
+  if(hasContact){
+    ctx.fillStyle = shadeColor(accent, -0.55);
+    ctx.fillRect(0, bodyH, W, footerH);
+    ctx.fillStyle = "#ffffff";
+    ctx.font = `700 ${Math.round(30*T.contactScale)}px ` + FONT_BODY;
+    ctx.textBaseline = "middle";
+    const contactText = cfg.phone ? "📲 " + cfg.phone : (cfg.storeName || "");
+    ctx.fillText(truncateToWidth(ctx, contactText, W - pad*2), pad, bodyH + footerH/2 + 2);
+    ctx.textBaseline = "alphabetic";
+    ctx.textAlign = "left";
+  }
+}
+
+/* ---- Estilo OSCURA ELEGANTE: fondo negro/carbón, líneas finas doradas/acento, tipografía fina ---- */
+
+async function drawCardOscura(ctx, W, H, product, img, cfg, accent, pad){
+  const T = getCardTuning(cfg);
+  ctx.fillStyle = "#0c0d10";
+  ctx.fillRect(0,0,W,H);
+  // marco fino a todo el borde
+  ctx.strokeStyle = rgba(accent, 0.55);
+  ctx.lineWidth = 3;
+  ctx.strokeRect(pad*0.45, pad*0.45, W - pad*0.9, H - pad*0.9);
+
+  const hasHeader = !!(cfg.storeName || cfg.logo);
+  const hasContact = !!(cfg.phone || cfg.address);
+  let cursorY = pad;
+
+  if(hasHeader){
+    if(cfg.logo){
+      const logoImg = await loadImg(cfg.logo);
+      if(logoImg){
+        const size = Math.round(70 * T.logoScale);
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(W/2, cursorY + size/2, size/2, 0, Math.PI*2);
+        ctx.strokeStyle = accent; ctx.lineWidth = 2; ctx.stroke();
+        ctx.clip();
+        drawImageCover(ctx, logoImg, W/2 - size/2, cursorY, size, size);
+        ctx.restore();
+        cursorY += size + 18;
+      }
+    }
+    ctx.fillStyle = "rgba(255,255,255,0.92)";
+    ctx.font = "600 30px " + FONT_BODY;
+    try{ ctx.letterSpacing = "3px"; }catch(e){}
+    ctx.textAlign = "center";
+    ctx.fillText((cfg.storeName||"").toUpperCase(), W/2, cursorY + 20);
+    try{ ctx.letterSpacing = "0px"; }catch(e){}
+    ctx.textAlign = "left";
+    cursorY += 46;
+  }
+
+  // línea fina decorativa
+  ctx.strokeStyle = rgba(accent, 0.7);
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(W/2-60, cursorY); ctx.lineTo(W/2+60, cursorY); ctx.stroke();
+  cursorY += 30;
+
+  if(product.category){
+    ctx.font = "600 24px " + FONT_BODY;
+    const _catLbl = product.category.toUpperCase();
+    const _catW = ctx.measureText(_catLbl).width;
+    ctx.fillStyle = accentFillStyle(ctx, getProductAccentGradient(product, cfg), accent, W/2-_catW/2, cursorY-24, _catW, 30);
+    ctx.textAlign = "center";
+    try{ ctx.letterSpacing = "2px"; }catch(e){}
+    ctx.fillText(_catLbl, W/2, cursorY);
+    try{ ctx.letterSpacing = "0px"; }catch(e){}
+    ctx.textAlign = "left";
+    cursorY += 40;
+  }
+
+  const titleFit = fitTitleFont(ctx, product.name, W - pad*2.4, 2, "500", Math.round(50*T.nameScale), FONT_BODY, Math.round(30*T.nameScale));
+  const titleLines = titleFit.lines;
+  ctx.fillStyle = "#ffffff";
+  ctx.textAlign = "center";
+  const oscuraLineH = Math.round(titleFit.size*1.12);
+  titleLines.forEach((line,i)=>{ ctx.fillText(line, W/2, cursorY + 44 + i*oscuraLineH); });
+  ctx.textAlign = "left";
+  const titleBottom = cursorY + titleLines.length*oscuraLineH + 26;
+
+  const footerZone = hasContact ? 170 : 120;
+  const photoTop = titleBottom;
+  const photoBoxH = Math.max(120, H - footerZone - photoTop);
+
+  if(img){
+    const inset = 30;
+    const fit = fitContain(img, W - pad*2 - inset*2, photoBoxH - inset*2);
+    const dx = (W - fit.w)/2, dy = photoTop + (photoBoxH - fit.h)/2;
+    ctx.save();
+    ctx.shadowColor = "rgba(0,0,0,0.6)"; ctx.shadowBlur = 36; ctx.shadowOffsetY = 14;
+    roundRect(ctx, dx, dy, fit.w, fit.h, 10);
+    ctx.strokeStyle = rgba(accent,0.5); ctx.lineWidth = 2; ctx.stroke();
+    ctx.clip();
+    drawImageWithFocus(ctx, img, dx, dy, fit.w, fit.h, getPhotoFocus(product, cfg));
+    ctx.restore();
+  }else{
+    ctx.fillStyle = "rgba(255,255,255,0.6)";
+    ctx.font = "500 36px " + FONT_BODY;
+    ctx.textAlign = "center";
+    ctx.fillText("Sin foto todavía", W/2, photoTop + photoBoxH/2 + 12);
+    ctx.textAlign = "left";
+  }
+
+  const priceText = priceCurrencyLabel(cfg, product) + " " + formatNumber(product.price);
+  if(isPriceOverridden(cfg)){
+    drawPriceTagGeneric(ctx, cfg, accent, product, { left: pad, top: photoTop, right: W-pad, bottom: photoTop+photoBoxH });
+  }else{
+    ctx.font = `600 ${Math.round(56*T.priceScale)}px ` + FONT_DISPLAY;
+    ctx.fillStyle = accent;
+    ctx.textAlign = "center";
+    ctx.fillText(priceText, W/2, H - footerZone + 62);
+    ctx.textAlign = "left";
+  }
+
+  if(hasContact){
+    const bits = [cfg.phone ? "📞 "+cfg.phone : "", cfg.address ? "📍 "+cfg.address : ""].filter(Boolean).join("     ");
+    ctx.fillStyle = "rgba(255,255,255,0.75)";
+    ctx.font = `400 ${Math.round(24*T.contactScale)}px ` + FONT_BODY;
+    ctx.textAlign = "center";
+    ctx.fillText(truncateToWidth(ctx, bits, W-pad*2), W/2, H - pad + 2);
+    ctx.textAlign = "left";
+  }
+}
+
+/* ---- Estilo VIBRANTE: bloque de color de acento a pantalla completa, tipografía grande ---- */
+
+async function drawCardVibrante(ctx, W, H, product, img, cfg, accent, pad){
+  const T = getCardTuning(cfg);
+  const bgGrad = ctx.createLinearGradient(0,0,W,H);
+  bgGrad.addColorStop(0, accent);
+  bgGrad.addColorStop(1, shadeColor(accent, -0.35));
+  ctx.fillStyle = bgGrad;
+  ctx.fillRect(0,0,W,H);
+
+  const hasHeader = !!(cfg.storeName || cfg.logo);
+  const hasContact = !!(cfg.phone || cfg.address);
+  let cursorY = pad;
+
+  if(hasHeader){
+    const logoSize = Math.round(78 * T.logoScale);
+    let tx = pad;
+    if(cfg.logo){
+      const logoImg = await loadImg(cfg.logo);
+      if(logoImg){
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(pad+logoSize/2, cursorY+logoSize/2, logoSize/2, 0, Math.PI*2);
+        ctx.fillStyle = "#ffffff"; ctx.fill();
+        ctx.clip();
+        drawImageCover(ctx, logoImg, pad+4, cursorY+4, logoSize-8, logoSize-8);
+        ctx.restore();
+        tx = pad + logoSize + 20;
+      }
+    }
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "800 38px " + FONT_DISPLAY;
+    ctx.textBaseline = "middle";
+    ctx.fillText(truncateToWidth(ctx, cfg.storeName||"", W-tx-pad), tx, cursorY+logoSize/2);
+    ctx.textBaseline = "alphabetic";
+    cursorY += logoSize + 20;
+  }
+
+  if(product.category){
+    const label = product.category.toUpperCase();
+    ctx.font = "800 26px " + FONT_BODY;
+    const textW = ctx.measureText(label).width;
+    const boxW = textW+40, boxH = 48;
+    ctx.save();
+    roundRect(ctx, pad, cursorY, boxW, boxH, boxH/2);
+    ctx.fillStyle = "rgba(255,255,255,0.22)";
+    ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = "#ffffff";
+    ctx.textBaseline = "middle";
+    ctx.fillText(label, pad+20, cursorY+boxH/2+1);
+    ctx.textBaseline = "alphabetic";
+    cursorY += boxH + 24;
+  }
+
+  const titleFit = fitTitleFont(ctx, product.name, W-pad*2, 3, "800", Math.round(62*T.nameScale), FONT_DISPLAY, Math.round(38*T.nameScale));
+  const titleLines = titleFit.lines;
+  ctx.fillStyle = "#ffffff";
+  const vibLineH = Math.round(titleFit.size*1.0968);
+  titleLines.forEach((line,i)=>{ ctx.fillText(line, pad, cursorY+50+i*vibLineH); });
+  const titleBottom = cursorY + titleLines.length*vibLineH + 20;
+
+  const footerZone = hasContact ? 200 : 160;
+  const photoTop = titleBottom + 20;
+  const photoBoxH = Math.max(120, H - footerZone - photoTop);
+
+  ctx.save();
+  ctx.shadowColor = "rgba(0,0,0,0.3)"; ctx.shadowBlur = 30; ctx.shadowOffsetY = 12;
+  ctx.fillStyle = "#ffffff";
+  roundRect(ctx, pad, photoTop, W-pad*2, photoBoxH, 26);
+  ctx.fill();
+  ctx.restore();
+
+  if(img){
+    const inset = 22;
+    const fit = fitContain(img, W-pad*2-inset*2, photoBoxH-inset*2);
+    const dx = pad + ((W-pad*2)-fit.w)/2, dy = photoTop + (photoBoxH-fit.h)/2;
+    ctx.save();
+    roundRect(ctx, dx, dy, fit.w, fit.h, 16);
+    ctx.clip();
+    drawImageWithFocus(ctx, img, dx, dy, fit.w, fit.h, getPhotoFocus(product, cfg));
+    ctx.restore();
+  }else{
+    ctx.fillStyle = shadeColor(accent, 0.3);
+    ctx.font = "700 38px " + FONT_BODY;
+    ctx.textAlign = "center";
+    ctx.fillText("📦  Sin foto todavía", W/2, photoTop + photoBoxH/2 + 12);
+    ctx.textAlign = "left";
+  }
+
+  if(isPriceOverridden(cfg)){
+    drawPriceTagGeneric(ctx, cfg, accent, product, { left: pad, top: photoTop, right: W-pad, bottom: photoTop+photoBoxH });
+  }else{
+    const priceText = priceCurrencyLabel(cfg, product) + " " + formatNumber(product.price);
+    ctx.font = `800 ${Math.round(76*T.priceScale)}px ` + FONT_DISPLAY;
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(priceText, pad, H - (hasContact ? 100 : pad));
+  }
+
+  if(hasContact){
+    const bits = [cfg.phone ? "📞 "+cfg.phone : "", cfg.address ? "📍 "+cfg.address : ""].filter(Boolean).join("    ");
+    ctx.fillStyle = "rgba(255,255,255,0.9)";
+    ctx.font = `600 ${Math.round(28*T.contactScale)}px ` + FONT_BODY;
+    ctx.fillText(truncateToWidth(ctx, bits, W-pad*2), pad, H-pad+4);
+  }
+}
+
+/* ---- Estilo POLAROID: marco blanco tipo foto instantánea, ligeramente inclinado ---- */
+
+async function drawCardPolaroid(ctx, W, H, product, img, cfg, accent, pad){
+  const T = getCardTuning(cfg);
+  const bgGrad = ctx.createLinearGradient(0,0,W,H);
+  bgGrad.addColorStop(0, shadeColor(accent, -0.82));
+  bgGrad.addColorStop(1, shadeColor(accent, -0.6));
+  ctx.fillStyle = bgGrad;
+  ctx.fillRect(0,0,W,H);
+
+  const hasHeader = !!(cfg.storeName || cfg.logo);
+  const hasContact = !!(cfg.phone || cfg.address);
+
+  let cursorY = pad*0.7;
+  if(hasHeader){
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "700 34px " + FONT_DISPLAY;
+    ctx.textAlign = "center";
+    ctx.fillText(truncateToWidth(ctx, cfg.storeName||"", W-pad*2), W/2, cursorY+30);
+    ctx.textAlign = "left";
+    cursorY += 60;
+  }
+
+  // ---- marco blanco tipo polaroid, con la foto arriba y espacio de "anotación" abajo ----
+  const frameW = W - pad*1.6;
+  const frameX = (W-frameW)/2;
+  const frameTop = cursorY + 10;
+  const footerZone = hasContact ? 170 : 130;
+  const frameH = H - footerZone - frameTop;
+  const innerPad = frameW * 0.06;
+  const photoH = frameH - innerPad*2 - 130;
+
+  ctx.save();
+  ctx.translate(W/2, frameTop + frameH/2);
+  ctx.rotate(-Math.PI/60);
+  ctx.translate(-W/2, -(frameTop+frameH/2));
+  ctx.shadowColor = "rgba(0,0,0,0.35)"; ctx.shadowBlur = 30; ctx.shadowOffsetY = 14;
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(frameX, frameTop, frameW, frameH);
+  ctx.shadowColor = "transparent";
+
+  if(img){
+    const fit = fitContain(img, frameW - innerPad*2, photoH);
+    const dx = frameX + innerPad + ((frameW-innerPad*2)-fit.w)/2, dy = frameTop + innerPad + (photoH-fit.h)/2;
+    drawImageWithFocus(ctx, img, dx, dy, fit.w, fit.h, getPhotoFocus(product, cfg));
+  }else{
+    ctx.fillStyle = "#c9cdd4";
+    ctx.fillRect(frameX+innerPad, frameTop+innerPad, frameW-innerPad*2, photoH);
+    ctx.fillStyle = "#7a8290";
+    ctx.font = "600 34px " + FONT_BODY;
+    ctx.textAlign = "center";
+    ctx.fillText("📦  Sin foto", frameX+frameW/2, frameTop+innerPad+photoH/2+12);
+    ctx.textAlign = "left";
+  }
+
+  // ---- "anotación" manuscrita: nombre del producto y precio, como si estuvieran escritos a mano ----
+  const noteTop = frameTop + innerPad + photoH + 20;
+  const titleFit = fitTitleFont(ctx, product.name, frameW - innerPad*2, 2, "600", Math.round(46*T.nameScale), FONT_BODY, Math.round(28*T.nameScale));
+  const titleLines = titleFit.lines;
+  ctx.fillStyle = "#1c2233";
+  ctx.textAlign = "center";
+  const polaroidLineH = Math.round(titleFit.size*1.087);
+  titleLines.forEach((line,i)=>{ ctx.fillText(line, W/2, noteTop + 38 + i*polaroidLineH); });
+
+  if(isPriceOverridden(cfg)){
+    ctx.textAlign = "left";
+    drawPriceTagGeneric(ctx, cfg, accent, product, { left: frameX+innerPad, top: frameTop+innerPad, right: frameX+frameW-innerPad, bottom: frameTop+innerPad+photoH });
+    ctx.textAlign = "center";
+  }else{
+    const priceText = priceCurrencyLabel(cfg, product) + " " + formatNumber(product.price);
+    ctx.font = `800 ${Math.round(50*T.priceScale)}px ` + FONT_DISPLAY;
+    const _priceW = ctx.measureText(priceText).width;
+    const _priceY = noteTop + titleLines.length*polaroidLineH + 74;
+    ctx.fillStyle = accentFillStyle(ctx, getProductAccentGradient(product, cfg), accent, W/2-_priceW/2, _priceY-40, _priceW, 50);
+    ctx.fillText(priceText, W/2, _priceY);
+  }
+  ctx.textAlign = "left";
+  ctx.restore();
+
+  if(product.category){
+    const label = product.category.toUpperCase();
+    ctx.font = "700 24px " + FONT_BODY;
+    const textW = ctx.measureText(label).width;
+    const boxW = textW+36, boxH = 42;
+    const bx = frameX + frameW - boxW - 10, by = frameTop - boxH/2;
+    ctx.save();
+    ctx.translate(bx+boxW/2, by+boxH/2);
+    ctx.rotate(Math.PI/24);
+    ctx.translate(-(bx+boxW/2), -(by+boxH/2));
+    roundRect(ctx, bx, by, boxW, boxH, boxH/2);
+    ctx.fillStyle = accentFillStyle(ctx, getProductAccentGradient(product, cfg), accent, bx, by, boxW, boxH);
+    ctx.fill();
+    ctx.fillStyle = "#ffffff";
+    ctx.textBaseline = "middle";
+    ctx.fillText(label, bx+18, by+boxH/2+1);
+    ctx.textBaseline = "alphabetic";
+    ctx.restore();
+  }
+
+  if(hasContact){
+    const bits = [cfg.phone ? "📞 "+cfg.phone : "", cfg.address ? "📍 "+cfg.address : ""].filter(Boolean).join("    ");
+    ctx.fillStyle = "rgba(255,255,255,0.9)";
+    ctx.font = `500 ${Math.round(26*T.contactScale)}px ` + FONT_BODY;
+    ctx.textAlign = "center";
+    ctx.fillText(truncateToWidth(ctx, bits, W-pad*2), W/2, H - pad + 6);
+    ctx.textAlign = "left";
+  }
+}
+
+/* ---- Estilo CINTA Y SELLO: foto real de fondo (sin difuminar), banner con check,
+   etiqueta secundaria, precio en círculo y logo abajo — inspirado en tarjetas de oferta ---- */
+
+async function drawCardCinta(ctx, W, H, product, img, cfg, accent, pad){
+  const T = getCardTuning(cfg);
+  // fondo: la foto real, nítida, a pantalla completa
+  if(img){
+    drawImageWithFocus(ctx, img, 0, 0, W, H, getPhotoFocus(product, cfg));
+    // degradado sutil abajo para que el logo/contacto se lean bien sobre la foto
+    const g = ctx.createLinearGradient(0, H*0.72, 0, H);
+    g.addColorStop(0, "rgba(10,10,10,0)");
+    g.addColorStop(1, "rgba(10,10,10,0.55)");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, H*0.65, W, H*0.35);
+  }else{
+    const bgGrad = ctx.createLinearGradient(0,0,W,H);
+    bgGrad.addColorStop(0, shadeColor(accent, 0.85));
+    bgGrad.addColorStop(1, shadeColor(accent, 0.6));
+    ctx.fillStyle = bgGrad;
+    ctx.fillRect(0,0,W,H);
+  }
+
+  const bannerH = 108, bannerTop = pad - 8;
+  const title = product.name.toUpperCase();
+  const titleMaxW = W * 0.62;
+  const titleFit = fitTitleFont(ctx, title, titleMaxW - 90, 2, "800", Math.round(42*T.nameScale), FONT_BODY, Math.round(26*T.nameScale));
+  const titleLines = titleFit.lines;
+  const cintaTitleFont = titleFit.font;
+  const bannerActualH = titleLines.length > 1 ? bannerH + 46 : bannerH;
+
+  // ---- cinta blanca principal con nombre del producto ----
+  ctx.save();
+  ctx.shadowColor = "rgba(0,0,0,0.4)"; ctx.shadowBlur = 22; ctx.shadowOffsetY = 8;
+  ctx.beginPath();
+  const bw = Math.min(titleMaxW + 60, W - pad - 90);
+  ctx.moveTo(0, bannerTop);
+  ctx.lineTo(bw, bannerTop);
+  ctx.lineTo(bw + bannerActualH*0.4, bannerTop + bannerActualH/2);
+  ctx.lineTo(bw, bannerTop + bannerActualH);
+  ctx.lineTo(0, bannerTop + bannerActualH);
+  ctx.closePath();
+  ctx.fillStyle = "#fbfbfa";
+  ctx.fill();
+  ctx.restore();
+  ctx.fillStyle = accent;
+  ctx.fillRect(0, bannerTop, bw + bannerActualH*0.32, 8);
+  ctx.fillStyle = shadeColor(accent, -0.3);
+  ctx.fillRect(0, bannerTop + bannerActualH - 8, bw + bannerActualH*0.32, 8);
+
+  // check verde
+  const checkR = 30, checkCx = pad + checkR, checkCy = bannerTop + bannerActualH/2;
+  ctx.save();
+  ctx.shadowColor = "rgba(0,0,0,0.25)"; ctx.shadowBlur = 10; ctx.shadowOffsetY = 3;
+  ctx.beginPath(); ctx.arc(checkCx, checkCy, checkR, 0, Math.PI*2);
+  ctx.fillStyle = accent; ctx.fill();
+  ctx.restore();
+  ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 5; ctx.lineCap = "round"; ctx.lineJoin = "round";
+  ctx.beginPath();
+  ctx.moveTo(checkCx-13, checkCy);
+  ctx.lineTo(checkCx-3, checkCy+11);
+  ctx.lineTo(checkCx+14, checkCy-13);
+  ctx.stroke();
+
+  // nombre del producto dentro de la cinta
+  ctx.fillStyle = "#181818";
+  ctx.font = cintaTitleFont;
+  try{ ctx.letterSpacing = "0px"; }catch(e){}
+  const textX = pad + checkR*2 + 18;
+  const lineH = Math.round(titleFit.size*1.1429);
+  const blockH = titleLines.length * lineH;
+  let ty = bannerTop + bannerActualH/2 - blockH/2 + lineH*0.74;
+  titleLines.forEach(line=>{
+    ctx.fillText(truncateToWidth(ctx, line, bw - (textX)), textX, ty);
+    ty += lineH;
+  });
+
+  let nextY = bannerTop + bannerActualH;
+
+  // ---- etiqueta secundaria (categoría / SKU) tipo cinta gris, debajo ----
+  const subLabel = product.category || (product.sku ? "SKU " + product.sku : "");
+  if(subLabel){
+    const sub = subLabel.toUpperCase();
+    ctx.font = "800 30px " + FONT_BODY;
+    const subW = Math.min(ctx.measureText(sub).width + 70, W - pad - 120);
+    const subH = 60, subTop = nextY - 6;
+    ctx.save();
+    ctx.shadowColor = "rgba(0,0,0,0.35)"; ctx.shadowBlur = 14; ctx.shadowOffsetY = 5;
+    ctx.beginPath();
+    ctx.moveTo(pad, subTop);
+    ctx.lineTo(pad + subW, subTop);
+    ctx.lineTo(pad + subW + subH*0.4, subTop + subH/2);
+    ctx.lineTo(pad + subW, subTop + subH);
+    ctx.lineTo(pad, subTop + subH);
+    ctx.closePath();
+    const subGrad = ctx.createLinearGradient(pad, subTop, pad, subTop+subH);
+    subGrad.addColorStop(0, "#6b7280");
+    subGrad.addColorStop(1, "#374151");
+    ctx.fillStyle = subGrad;
+    ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = "#ffffff";
+    ctx.textBaseline = "middle";
+    ctx.fillText(sub, pad + 24, subTop + subH/2 + 2);
+    ctx.textBaseline = "alphabetic";
+    nextY = subTop + subH;
+  }
+
+  // ---- las insignias de esquina (¡ÚLTIMA UNIDAD!, OFERTA, etc.) se dibujan
+  //      después, fuera de esta función — les reservamos el espacio que ya
+  //      ocupa este encabezado propio para que no lo pisen ----
+  _cardTopInset = Math.max(0, nextY - pad + 6);
+
+  // ---- precio en círculo, arriba a la derecha ----
+  const priceText = priceCurrencyLabel(cfg, product) + formatNumber(product.price);
+  // La franja de abajo (chips de contacto a la izquierda + logo/nombre de
+  // tienda a la derecha) siempre vive pegada al borde inferior. Si el precio
+  // se movió a mano a una esquina de abajo, hay que dejarle ese espacio libre
+  // para que no se pisen los tres elementos ahí.
+  const cintaHasContact = !!(cfg.phone || cfg.address);
+  const cintaHasFooterBadge = !!cfg.storeName;
+  const cintaContactRows = (cfg.phone ? 1 : 0) + (cfg.address ? 1 : 0);
+  const cintaContactBlockH = cintaContactRows > 0 ? (cintaContactRows * 52 + (cintaContactRows - 1) * 12) : 0;
+  const cintaBottomReserve = Math.round(Math.max(cintaContactBlockH, cintaHasFooterBadge ? 60 : 0) * T.contactScale) + (cintaHasContact || cintaHasFooterBadge ? 30 : 0);
+  if(isPriceOverridden(cfg)){
+    drawPriceTagGeneric(ctx, cfg, accent, product, { left: pad, top: pad, right: W-pad, bottom: H-pad-cintaBottomReserve });
+  }else{
+    const circleR = Math.round(92 * T.priceScale), circleCx = W - pad - circleR, circleCy = pad + circleR;
+    ctx.save();
+    ctx.shadowColor = "rgba(0,0,0,0.45)"; ctx.shadowBlur = 24; ctx.shadowOffsetY = 8;
+    ctx.beginPath(); ctx.arc(circleCx, circleCy, circleR, 0, Math.PI*2);
+    const priceGrad = ctx.createLinearGradient(circleCx, circleCy-circleR, circleCx, circleCy+circleR);
+    priceGrad.addColorStop(0, shadeColor(accent, 0.18));
+    priceGrad.addColorStop(1, shadeColor(accent, -0.18));
+    ctx.fillStyle = priceGrad;
+    ctx.fill();
+    ctx.restore();
+    ctx.strokeStyle = "rgba(255,255,255,0.85)"; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.arc(circleCx, circleCy, circleR-4, 0, Math.PI*2); ctx.stroke();
+    ctx.fillStyle = "#ffffff";
+    ctx.textAlign = "center";
+    let priceFont = Math.round(54 * T.priceScale);
+    ctx.font = "800 " + priceFont + "px " + FONT_DISPLAY;
+    while(ctx.measureText(priceText).width > circleR*1.6 && priceFont > 28){
+      priceFont -= 4;
+      ctx.font = "800 " + priceFont + "px " + FONT_DISPLAY;
+    }
+    ctx.fillText(priceText, circleCx, circleCy - 4);
+    ctx.font = "700 24px " + FONT_DISPLAY;
+    try{ ctx.letterSpacing = "1px"; }catch(e){}
+    ctx.fillText("PRECIO", circleCx, circleCy + 34);
+    try{ ctx.letterSpacing = "0px"; }catch(e){}
+    ctx.textAlign = "left";
+  }
+
+  // ---- ancho del nombre de tienda (se calcula antes que el contacto, solo
+  //      para saber cuánto espacio hay que dejarle libre en su fila). Esta
+  //      tarjeta va sin el círculo del logo, solo el nombre en texto. ----
+  let cintaBadgeNameW = 0;
+  if(cfg.storeName){
+    ctx.font = "800 32px " + FONT_DISPLAY;
+    cintaBadgeNameW = ctx.measureText(cfg.storeName).width;
+  }
+  const cintaBadgeW = cfg.storeName ? cintaBadgeNameW : 0;
+
+  // ---- datos de contacto: teléfono y dirección en líneas separadas (nunca
+  //      lado a lado) para que jamás choquen entre sí; la línea de más abajo
+  //      comparte fila con el logo/nombre de la esquina, así que a ESA le
+  //      recortamos el ancho para dejarle su espacio libre. ----
+  const hasContact = !!(cfg.phone || cfg.address);
+  if(hasContact){
+    ctx.font = `700 ${Math.round(28*T.contactScale)}px ` + FONT_DISPLAY;
+    const rowH = 52, rowGap = 12;
+    const lines = [];
+    if(cfg.address) lines.push("📍 " + cfg.address);
+    if(cfg.phone) lines.push("📞 " + cfg.phone);
+    let y = H - pad - rowH;
+    for(let i = lines.length - 1; i >= 0; i--){
+      const isBottomRow = i === lines.length - 1;
+      const rightReserve = isBottomRow && cintaBadgeW ? (cintaBadgeW + 24) : 0;
+      const maxW = W - pad*2 - rightReserve;
+      const label = truncateToWidth(ctx, lines[i], maxW - 36);
+      const w = Math.min(ctx.measureText(label).width + 36, maxW);
+      ctx.save();
+      ctx.fillStyle = "rgba(0,0,0,0.5)";
+      roundRect(ctx, pad, y, w, rowH, rowH/2);
+      ctx.fill();
+      ctx.restore();
+      ctx.fillStyle = "#ffffff";
+      ctx.textBaseline = "middle";
+      ctx.fillText(label, pad+18, y+rowH/2);
+      ctx.textBaseline = "alphabetic";
+      y -= (rowH + rowGap);
+    }
+  }
+
+  // ---- nombre del negocio, esquina inferior derecha (sin el círculo del
+  //      logo en esta tarjeta, a pedido de José) ----
+  if(cfg.storeName){
+    ctx.font = "800 32px " + FONT_DISPLAY;
+    const nameW = ctx.measureText(cfg.storeName).width;
+    const lx = W - pad - nameW;
+    const ly = H - pad - Math.round(64 * T.logoScale)/2 - 6;
+    ctx.fillStyle = "#ffffff";
+    ctx.textBaseline = "middle";
+    ctx.save();
+    ctx.shadowColor = "rgba(0,0,0,0.6)"; ctx.shadowBlur = 8;
+    ctx.fillText(cfg.storeName, lx, ly);
+    ctx.restore();
+    ctx.textBaseline = "alphabetic";
+  }
+}
+
+/* ---- Estilo REVISTA: foto de fondo a toda la tarjeta tipo portada de revista,
+   marco fino, degradado inferior y título editorial grande. ---- */
+
+async function drawCardRevista(ctx, W, H, product, img, cfg, accent, pad){
+  const T = getCardTuning(cfg);
+
+  if(img){
+    drawImageWithFocus(ctx, img, 0, 0, W, H, getPhotoFocus(product, cfg));
+  }else{
+    const bgGrad = ctx.createLinearGradient(0,0,W,H);
+    bgGrad.addColorStop(0, shadeColor(accent, -0.8));
+    bgGrad.addColorStop(1, shadeColor(accent, -0.5));
+    ctx.fillStyle = bgGrad;
+    ctx.fillRect(0,0,W,H);
+  }
+
+  // degradado inferior oscuro, para que el título se lea bien sobre la foto
+  const scrim = ctx.createLinearGradient(0, H*0.38, 0, H);
+  scrim.addColorStop(0, "rgba(6,6,10,0)");
+  scrim.addColorStop(1, "rgba(6,6,10,0.9)");
+  ctx.fillStyle = scrim;
+  ctx.fillRect(0, H*0.38, W, H*0.62);
+
+  // leve degradado superior para que el logo/nombre se lean sobre la foto
+  const topScrim = ctx.createLinearGradient(0,0,0,200);
+  topScrim.addColorStop(0, "rgba(0,0,0,0.5)");
+  topScrim.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = topScrim;
+  ctx.fillRect(0,0,W,200);
+
+  if(!img){
+    ctx.fillStyle = "rgba(255,255,255,0.75)";
+    ctx.font = "700 38px " + FONT_BODY;
+    ctx.textAlign = "center";
+    ctx.fillText("📦  Sin foto todavía", W/2, H*0.4);
+    ctx.textAlign = "left";
+  }
+
+  // marco fino blanco, tipo portada de revista
+  ctx.save();
+  ctx.strokeStyle = "rgba(255,255,255,0.9)";
+  ctx.lineWidth = 3;
+  ctx.strokeRect(16, 16, W-32, H-32);
+  ctx.restore();
+
+  // ---- encabezado: logo + nombre de la tienda ----
+  const hasHeader = !!(cfg.storeName || cfg.logo);
+  if(hasHeader){
+    const logoSize = Math.round(62 * T.logoScale);
+    let tx = pad;
+    const hy = pad*0.75;
+    if(cfg.logo){
+      const logoImg = await loadImg(cfg.logo);
+      if(logoImg){
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(pad+logoSize/2, hy+logoSize/2, logoSize/2, 0, Math.PI*2);
+        ctx.fillStyle = "#ffffff"; ctx.fill();
+        ctx.clip();
+        drawImageCover(ctx, logoImg, pad+3, hy+3, logoSize-6, logoSize-6);
+        ctx.restore();
+        tx = pad + logoSize + 18;
+      }
+    }
+    if(cfg.storeName){
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "700 32px " + FONT_DISPLAY;
+      ctx.textBaseline = "middle";
+      ctx.fillText(truncateToWidth(ctx, cfg.storeName, W-tx-pad), tx, hy+logoSize/2+1);
+      ctx.textBaseline = "alphabetic";
+    }
+  }
+
+  // ---- bloque inferior, armado de abajo hacia arriba: contacto, precio, categoría, título ----
+  let cursorBottom = H - pad;
+
+  const hasContact = !!(cfg.phone || cfg.address);
+  if(hasContact){
+    const bits = [cfg.phone?("📞 "+cfg.phone):"", cfg.address?("📍 "+cfg.address):""].filter(Boolean).join("   ");
+    ctx.fillStyle = "rgba(255,255,255,0.85)";
+    ctx.font = `500 ${Math.round(24*T.contactScale)}px ` + FONT_BODY;
+    ctx.fillText(truncateToWidth(ctx, bits, W-pad*2), pad, cursorBottom);
+    cursorBottom -= 50;
+  }
+
+  const priceText = priceCurrencyLabel(cfg, product) + " " + formatNumber(product.price);
+  if(isPriceOverridden(cfg)){
+    drawPriceTagGeneric(ctx, cfg, accent, product, { left: pad, top: pad, right: W-pad, bottom: H-pad });
+    cursorBottom -= 110;
+  }else{
+    ctx.font = `800 ${Math.round(52*T.priceScale)}px ` + FONT_DISPLAY;
+    const priceW = ctx.measureText(priceText).width;
+    const boxW = priceW+56, boxH = Math.round(88*T.priceScale);
+    const boxX = pad, boxY = cursorBottom - boxH;
+    ctx.save();
+    ctx.shadowColor = "rgba(0,0,0,0.4)"; ctx.shadowBlur = 18; ctx.shadowOffsetY = 6;
+    ctx.fillStyle = accent;
+    roundRect(ctx, boxX, boxY, boxW, boxH, 14);
+    ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(priceText, boxX+28, boxY+boxH*0.66);
+    cursorBottom = boxY - 28;
+  }
+
+  if(product.category){
+    const label = product.category.toUpperCase();
+    ctx.font = "700 24px " + FONT_BODY;
+    try{ ctx.letterSpacing = "2px"; }catch(e){}
+    ctx.fillStyle = accentFillStyle(ctx, getProductAccentGradient(product, cfg), accent, pad, cursorBottom-24, ctx.measureText(label).width, 30);
+    ctx.fillText(label, pad, cursorBottom);
+    try{ ctx.letterSpacing = "0px"; }catch(e){}
+    cursorBottom -= 30;
+  }
+
+  ctx.fillStyle = accent;
+  ctx.fillRect(pad, cursorBottom, 70, 5);
+  cursorBottom -= 22;
+
+  const titleFit = fitTitleFont(ctx, product.name, W-pad*2, 3, "800", Math.round(56*T.nameScale), FONT_DISPLAY, Math.round(34*T.nameScale));
+  const titleLines = titleFit.lines;
+  const lineH = Math.round(titleFit.size*1.1071);
+  const titleTop = cursorBottom - titleLines.length*lineH;
+  ctx.fillStyle = "#ffffff";
+  titleLines.forEach((line,i)=>{ ctx.fillText(line, pad, titleTop + i*lineH + lineH*0.8); });
+}
+
+/* ---- Estilo BOUTIQUE: fondo claro tipo crema con marco fino color de acento,
+   foto enmarcada y tipografía elegante centrada — ideal para productos de línea
+   premium/decoración (juegos de cama, regalos, artículos delicados). ---- */
+
+async function drawCardBoutique(ctx, W, H, product, img, cfg, accent, pad){
+  const T = getCardTuning(cfg);
+  const cream = "#f6f1e7";
+  const ink = "#2a2420";
+  ctx.fillStyle = cream;
+  ctx.fillRect(0,0,W,H);
+
+  // doble marco fino, tono acento
+  ctx.save();
+  ctx.strokeStyle = accent;
+  ctx.lineWidth = 3;
+  ctx.strokeRect(30, 30, W-60, H-60);
+  ctx.lineWidth = 1.5;
+  ctx.globalAlpha = 0.55;
+  ctx.strokeRect(42, 42, W-84, H-84);
+  ctx.restore();
+
+  const innerPad = pad + 20;
+
+  // ---- encabezado centrado: logo + nombre de la tienda ----
+  let cursorY = innerPad;
+  const hasHeader = !!(cfg.storeName || cfg.logo);
+  if(hasHeader){
+    const logoSize = Math.round(70 * T.logoScale);
+    if(cfg.logo){
+      const logoImg = await loadImg(cfg.logo);
+      if(logoImg){
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(W/2, cursorY+logoSize/2, logoSize/2, 0, Math.PI*2);
+        ctx.strokeStyle = accent; ctx.lineWidth = 3;
+        ctx.stroke();
+        ctx.clip();
+        drawImageCover(ctx, logoImg, W/2-logoSize/2, cursorY, logoSize, logoSize);
+        ctx.restore();
+        cursorY += logoSize + 14;
+      }
+    }
+    if(cfg.storeName){
+      ctx.fillStyle = ink;
+      ctx.font = "700 32px " + FONT_DISPLAY;
+      ctx.textAlign = "center";
+      try{ ctx.letterSpacing = "1px"; }catch(e){}
+      ctx.fillText(truncateToWidth(ctx, cfg.storeName.toUpperCase(), W-innerPad*2), W/2, cursorY+28);
+      try{ ctx.letterSpacing = "0px"; }catch(e){}
+      ctx.textAlign = "left";
+      cursorY += 46;
+    }
+    ctx.strokeStyle = accent; ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(W/2-60, cursorY+10); ctx.lineTo(W/2+60, cursorY+10);
+    ctx.stroke();
+    cursorY += 34;
+  }else{
+    cursorY += 10;
+  }
+
+  // ---- foto con marco doble ----
+  const footerH = 190;
+  const photoTop = cursorY;
+  const photoBoxH = Math.max(130, H - footerH - photoTop);
+  const photoBoxW = W - innerPad*2;
+
+  ctx.save();
+  ctx.shadowColor = "rgba(0,0,0,0.18)"; ctx.shadowBlur = 26; ctx.shadowOffsetY = 10;
+  ctx.fillStyle = "#ffffff";
+  roundRect(ctx, innerPad, photoTop, photoBoxW, photoBoxH, 6);
+  ctx.fill();
+  ctx.restore();
+  ctx.save();
+  ctx.strokeStyle = accent; ctx.lineWidth = 2;
+  roundRect(ctx, innerPad+10, photoTop+10, photoBoxW-20, photoBoxH-20, 4);
+  ctx.stroke();
+  ctx.restore();
+
+  if(img){
+    const inset = 22;
+    const fit = fitContain(img, photoBoxW-inset*2, photoBoxH-inset*2);
+    const dx = innerPad + (photoBoxW-fit.w)/2, dy = photoTop + (photoBoxH-fit.h)/2;
+    ctx.save();
+    roundRect(ctx, dx, dy, fit.w, fit.h, 4);
+    ctx.clip();
+    drawImageWithFocus(ctx, img, dx, dy, fit.w, fit.h, getPhotoFocus(product, cfg));
+    ctx.restore();
+  }else{
+    ctx.fillStyle = "rgba(42,36,32,0.4)";
+    ctx.font = "600 34px " + FONT_BODY;
+    ctx.textAlign = "center";
+    ctx.fillText("📦  Sin foto todavía", W/2, photoTop+photoBoxH/2+10);
+    ctx.textAlign = "left";
+  }
+
+  // ---- categoría, nombre y precio, en la franja inferior, centrados ----
+  let fy = photoTop + photoBoxH + 40;
+  if(product.category){
+    ctx.font = "700 24px " + FONT_BODY;
+    const _catLbl2 = product.category.toUpperCase();
+    const _catW2 = ctx.measureText(_catLbl2).width;
+    ctx.fillStyle = accentFillStyle(ctx, getProductAccentGradient(product, cfg), accent, W/2-_catW2/2, fy-24, _catW2, 30);
+    try{ ctx.letterSpacing = "2px"; }catch(e){}
+    ctx.textAlign = "center";
+    ctx.fillText(_catLbl2, W/2, fy);
+    try{ ctx.letterSpacing = "0px"; }catch(e){}
+    ctx.textAlign = "left";
+    fy += 34;
+  }
+
+  const titleFit = fitTitleFont(ctx, product.name, photoBoxW, 2, "700", Math.round(46*T.nameScale), FONT_DISPLAY, Math.round(28*T.nameScale));
+  const titleLines = titleFit.lines;
+  ctx.fillStyle = ink;
+  ctx.textAlign = "center";
+  const lineH = Math.round(titleFit.size*1.087);
+  titleLines.forEach((line,i)=>{ ctx.fillText(line, W/2, fy + 34 + i*lineH); });
+  ctx.textAlign = "left";
+  fy += titleLines.length*lineH + 24;
+
+  const priceText = priceCurrencyLabel(cfg, product) + " " + formatNumber(product.price);
+  if(isPriceOverridden(cfg)){
+    drawPriceTagGeneric(ctx, cfg, accent, product, { left: innerPad, top: photoTop, right: W-innerPad, bottom: photoTop+photoBoxH });
+  }else{
+    ctx.font = `800 ${Math.round(40*T.priceScale)}px ` + FONT_DISPLAY;
+    const priceW = ctx.measureText(priceText).width;
+    const boxW = priceW+56, boxH = Math.round(62*T.priceScale);
+    const boxX = W/2-boxW/2, boxY = fy;
+    ctx.save();
+    ctx.fillStyle = accent;
+    roundRect(ctx, boxX, boxY, boxW, boxH, boxH/2);
+    ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = "#ffffff";
+    ctx.textAlign = "center";
+    ctx.fillText(priceText, W/2, boxY+boxH*0.66);
+    ctx.textAlign = "left";
+  }
+}
+
+/* ---- Estilo SERVICIO: pensado para negocios de servicio (ferretería, taller,
+   mensajería, etc.) — logo y nombre de la tienda arriba junto a la fecha,
+   categoría en pastilla sólida, título con la primera palabra resaltada y
+   subrayada, foto grande, y si el producto está en oferta, una caja compacta
+   (a propósito más chica que el diseño de referencia de José, que ocupaba
+   media tarjeta) con precio tachado + precio nuevo, flotando sobre la
+   esquina inferior derecha de la foto. ---- */
+
+async function drawCardServicio(ctx, W, H, product, img, cfg, accent, pad){
+  const T = getCardTuning(cfg);
+  const ink = "#1c2420";
+  ctx.fillStyle = "#faf8f5";
+  ctx.fillRect(0, 0, W, H);
+
+  const grad = getProductAccentGradient(product, cfg);
+
+  // ---- marca de agua: el logo del negocio, grande y tenue, asomando en la
+  //      esquina superior derecha (como en la referencia de José). Se dibuja
+  //      antes que el resto para que quede detrás de la foto y los textos. ----
+  if(cfg.logo){
+    const wmImg = await loadImg(cfg.logo);
+    if(wmImg){
+      const wmSize = Math.round(W * 0.62);
+      ctx.save();
+      ctx.globalAlpha = 0.10;
+      ctx.beginPath();
+      ctx.arc(W - wmSize*0.28, wmSize*0.28, wmSize/2, 0, Math.PI*2);
+      ctx.clip();
+      drawImageCover(ctx, wmImg, W - wmSize*0.78, -wmSize*0.22, wmSize, wmSize);
+      ctx.restore();
+    }
+  }
+
+  // ---- encabezado: logo + nombre de la tienda a la izquierda, fecha a la derecha ----
+  let cursorY = pad;
+  const logoSize = Math.round(72 * T.logoScale);
+  let headerBottom = pad;
+  if(cfg.logo || cfg.storeName){
+    if(cfg.logo){
+      const logoImg = await loadImg(cfg.logo);
+      if(logoImg){
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(pad+logoSize/2, cursorY+logoSize/2, logoSize/2, 0, Math.PI*2);
+        ctx.clip();
+        drawImageCover(ctx, logoImg, pad, cursorY, logoSize, logoSize);
+        ctx.restore();
+        ctx.strokeStyle = "rgba(0,0,0,0.12)"; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(pad+logoSize/2, cursorY+logoSize/2, logoSize/2, 0, Math.PI*2); ctx.stroke();
+      }
+    }
+    if(cfg.storeName){
+      ctx.fillStyle = ink;
+      ctx.font = "700 34px " + FONT_DISPLAY;
+      ctx.textBaseline = "middle";
+      ctx.fillText(truncateToWidth(ctx, cfg.storeName, W - pad*2 - logoSize - 20 - 150), pad + (cfg.logo?logoSize+18:0), cursorY + logoSize/2);
+      ctx.textBaseline = "alphabetic";
+    }
+    headerBottom = cursorY + logoSize;
+  }
+  // fecha, arriba a la derecha
+  const dateText = new Date().toLocaleDateString("es-CU");
+  ctx.font = "600 26px " + FONT_BODY;
+  ctx.fillStyle = "rgba(28,36,32,0.45)";
+  ctx.textAlign = "right";
+  ctx.fillText(dateText, W - pad, pad + 26);
+  ctx.textAlign = "left";
+
+  cursorY = headerBottom + 26;
+
+  // ---- pastilla de categoría, sólida (se pinta en degradado si hay 2+ colores principales) ----
+  if(product.category){
+    const label = product.category.toUpperCase();
+    ctx.font = "700 24px " + FONT_BODY;
+    const textW = ctx.measureText(label).width;
+    const boxW = textW + 44, boxH = 46;
+    ctx.save();
+    roundRect(ctx, pad, cursorY, boxW, boxH, boxH/2);
+    ctx.fillStyle = accentFillStyle(ctx, grad, accent, pad, cursorY, boxW, boxH);
+    ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = "#ffffff";
+    ctx.textBaseline = "middle";
+    try{ ctx.letterSpacing = "1px"; }catch(e){}
+    ctx.fillText(label, pad + 22, cursorY + boxH/2 + 1);
+    try{ ctx.letterSpacing = "0px"; }catch(e){}
+    ctx.textBaseline = "alphabetic";
+    cursorY += boxH + 26;
+  }else{
+    cursorY += 8;
+  }
+
+  // ---- título: primera palabra resaltada y subrayada, resto en negro ----
+  const titleMaxW = W - pad*2;
+  const titleFit = fitTitleFont(ctx, product.name, titleMaxW, 2, "800", Math.round(56*T.nameScale), FONT_DISPLAY, Math.round(34*T.nameScale));
+  const titleLineH = Math.round(titleFit.size * 1.14);
+  const titleTop = cursorY;
+  titleFit.lines.forEach((line, i)=>{
+    const y = titleTop + i*titleLineH + titleLineH*0.8;
+    ctx.font = `800 ${titleFit.size}px ` + FONT_DISPLAY;
+    if(i === 0){
+      const words = line.split(" ");
+      const firstWord = words[0];
+      const firstWordW = ctx.measureText(firstWord).width;
+      ctx.fillStyle = accentFillStyle(ctx, grad, accent, pad, y-titleFit.size, firstWordW, titleFit.size*1.2);
+      ctx.fillText(firstWord, pad, y);
+      ctx.fillRect(pad, y + 6, firstWordW, 4);
+      const rest = words.slice(1).join(" ");
+      if(rest){
+        const fw = ctx.measureText(firstWord + " ").width;
+        ctx.fillStyle = ink;
+        ctx.fillText(rest, pad + fw, y);
+      }
+    }else{
+      ctx.fillStyle = ink;
+      ctx.fillText(line, pad, y);
+    }
+  });
+  cursorY = titleTop + titleFit.lines.length*titleLineH + 20;
+
+  // ---- foto grande ----
+  const hasContact = !!(cfg.phone || cfg.address);
+  const footerH = hasContact ? 150 : 50;
+  const photoTop = cursorY;
+  const photoBoxH = Math.max(160, H - footerH - photoTop);
+  const photoBoxW = W - pad*2;
+  ctx.save();
+  ctx.shadowColor = "rgba(0,0,0,0.16)"; ctx.shadowBlur = 22; ctx.shadowOffsetY = 8;
+  ctx.fillStyle = "#ffffff";
+  roundRect(ctx, pad, photoTop, photoBoxW, photoBoxH, 18);
+  ctx.fill();
+  ctx.restore();
+  if(img){
+    ctx.save();
+    roundRect(ctx, pad, photoTop, photoBoxW, photoBoxH, 18);
+    ctx.clip();
+    drawImageWithFocus(ctx, img, pad, photoTop, photoBoxW, photoBoxH, getPhotoFocus(product, cfg));
+    ctx.restore();
+  }else{
+    ctx.fillStyle = "rgba(28,36,32,0.35)";
+    ctx.font = "600 34px " + FONT_BODY;
+    ctx.textAlign = "center";
+    ctx.fillText("📦  Sin foto todavía", W/2, photoTop+photoBoxH/2+10);
+    ctx.textAlign = "left";
+  }
+
+  // ---- precio / oferta, flotando sobre la esquina inferior derecha de la foto ----
+  if(isPriceOverridden(cfg)){
+    drawPriceTagGeneric(ctx, cfg, accent, product, { left: pad, top: photoTop, right: W-pad, bottom: photoTop+photoBoxH });
+  }else if(isOnSale(product)){
+    // Caja compacta a propósito (José pidió que no sea tan grande como en su
+    // referencia): solo lo esencial, ocupa como mucho ~55% del ancho de la foto.
+    const pct = Math.round((1 - Number(product.price)/Number(product.oldPrice)) * 100);
+    const oldText = priceCurrencyLabel(cfg, product) + " " + formatNumber(product.oldPrice);
+    const newText = priceCurrencyLabel(cfg, product) + " " + formatNumber(product.price);
+    ctx.font = "800 30px " + FONT_DISPLAY;
+    const newW = ctx.measureText(newText).width;
+    ctx.font = "600 20px " + FONT_BODY;
+    const oldW = ctx.measureText(oldText).width;
+    const boxW = Math.min(photoBoxW - 24, Math.max(newW, oldW) + 48);
+    const boxH = 118;
+    const boxX = pad + photoBoxW - boxW - 14;
+    const boxY = photoTop + photoBoxH - boxH - 14;
+    ctx.save();
+    ctx.shadowColor = "rgba(0,0,0,0.28)"; ctx.shadowBlur = 18; ctx.shadowOffsetY = 6;
+    ctx.fillStyle = "#ffffff";
+    roundRect(ctx, boxX, boxY, boxW, boxH, 14);
+    ctx.fill();
+    ctx.restore();
+    let ty = boxY + 26;
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#b91c1c";
+    ctx.font = "800 20px " + FONT_DISPLAY;
+    try{ ctx.letterSpacing = "0.5px"; }catch(e){}
+    ctx.fillText("¡OFERTA!" + (pct>0? " -"+pct+"%":""), boxX+boxW/2, ty);
+    try{ ctx.letterSpacing = "0px"; }catch(e){}
+    ty += 30;
+    ctx.fillStyle = "#8a857c";
+    ctx.font = "600 20px " + FONT_BODY;
+    ctx.fillText(oldText, boxX+boxW/2, ty);
+    const owMeasured = ctx.measureText(oldText).width;
+    ctx.strokeStyle = "#8a857c"; ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(boxX+boxW/2-owMeasured/2, ty-7);
+    ctx.lineTo(boxX+boxW/2+owMeasured/2, ty-7);
+    ctx.stroke();
+    ty += 38;
+    ctx.font = "800 30px " + FONT_DISPLAY;
+    ctx.fillStyle = accentFillStyle(ctx, grad, accent, boxX, ty-26, boxW, 34);
+    ctx.fillText(newText, boxX+boxW/2, ty);
+    ctx.textAlign = "left";
+  }else{
+    const priceText = priceCurrencyLabel(cfg, product) + " " + formatNumber(product.price);
+    ctx.font = `800 ${Math.round(38*T.priceScale)}px ` + FONT_DISPLAY;
+    const priceW = ctx.measureText(priceText).width;
+    const boxW = priceW + 48, boxH = Math.round(58*T.priceScale);
+    const boxX = pad + photoBoxW - boxW - 14;
+    const boxY = photoTop + photoBoxH - boxH - 14;
+    ctx.save();
+    ctx.shadowColor = "rgba(0,0,0,0.25)"; ctx.shadowBlur = 16; ctx.shadowOffsetY = 5;
+    ctx.fillStyle = accentFillStyle(ctx, grad, accent, boxX, boxY, boxW, boxH);
+    roundRect(ctx, boxX, boxY, boxW, boxH, boxH/2);
+    ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = "#ffffff";
+    ctx.textAlign = "center";
+    ctx.fillText(priceText, boxX+boxW/2, boxY+boxH*0.68);
+    ctx.textAlign = "left";
+  }
+
+  // ---- pie: teléfono y dirección ----
+  if(hasContact){
+    let fy = photoTop + photoBoxH + 44;
+    if(cfg.phone){
+      const circleR = 24;
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(pad+circleR, fy-circleR+6, circleR, 0, Math.PI*2);
+      ctx.fillStyle = accentFillStyle(ctx, grad, accent, pad, fy-circleR*2+6, circleR*2, circleR*2);
+      ctx.fill();
+      ctx.restore();
+      ctx.font = `${Math.round(24*T.contactScale)}px ` + FONT_BODY;
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillStyle = "#ffffff";
+      ctx.fillText("📞", pad+circleR, fy-circleR+6);
+      ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+      ctx.fillStyle = ink;
+      ctx.font = `700 ${Math.round(32*T.contactScale)}px ` + FONT_DISPLAY;
+      ctx.fillText(truncateToWidth(ctx, cfg.phone, W-pad*2-circleR*2-16), pad+circleR*2+16, fy+2);
+      fy += 44;
+    }
+    if(cfg.address){
+      ctx.font = `600 ${Math.round(26*T.contactScale)}px ` + FONT_BODY;
+      ctx.fillStyle = "rgba(28,36,32,0.8)";
+      ctx.fillText(truncateToWidth(ctx, "📍 " + cfg.address, W-pad*2), pad, fy);
+    }
+  }
+}
+
+
+function applyFont(cfg){
+  var stack = FONT_STACKS[cfg.fontStyle] || FONT_STACKS.moderna;
+  FONT_BODY = stack.body; FONT_DISPLAY = stack.display;
+}
+var ESTILOS = [['protagonista','Protagonista'],['clasica','Clásica'],['minimal','Minimal'],['franja','Franja'],['dividida','Dividida'],['oscura','Oscura'],['vibrante','Vibrante'],['polaroid','Polaroid'],['cinta','Cinta'],['revista','Revista'],['boutique','Boutique'],['servicio','Servicio']];
+var FN = { protagonista: drawCardProtagonista, clasica: drawCardClasica, minimal: drawCardMinimal, franja: drawCardFranja, dividida: drawCardDividida, oscura: drawCardOscura, vibrante: drawCardVibrante, polaroid: drawCardPolaroid, cinta: drawCardCinta, revista: drawCardRevista, boutique: drawCardBoutique, servicio: drawCardServicio };
+/* cfg: {storeName,phone,address,currency,primaryColor,logo(imagen),tagline}; product: {id,name,price,oldPrice,category,qty,isNew,sku,unit}; img: imagen ya cargada o null */
+async function render(cfg, product, img, style, W, H) {
+  state.config = cfg; applyFont(cfg);
+  var cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+  var ctx = cv.getContext('2d'), accent = getProductAccentColor(product, cfg), pad = 56;
+  var T = getCardTuning(cfg);
+  _cardCorners = resolveCardCorners(product, cfg, T); _cardTopInset = 0;
+  var fn = FN[style] || drawCardClasica;
+  await fn(ctx, W, H, product, img, cfg, accent, pad);
+  var fuera = isOutOfStock(product);
+  if (fuera) drawOutOfStockRibbon(ctx, W, H, T);
+  else {
+    drawLowStockBadge(ctx, W, H, product, T);
+    var fs = cfg.promoFrameStyle || 'borde', propio = (fs === 'cinta' || fs === 'franja');
+    drawPromoFrame(ctx, W, H, product, cfg, fs);
+    if (!(propio && isOnSale(product)) && style !== 'servicio') drawOfertaBadge(ctx, W, H, product, T);
+    drawUrgencyBadge(ctx, W, H, product, T);
+  }
+  _cardCorners = null; _cardTopInset = 0;
+  return cv;
+}
+return { ESTILOS: ESTILOS, render: render };
+})();
+
+var AD_ESTILOS = [['grid', 'Catálogo'], ['foto', 'Foto grande'], ['mosaico', 'Mosaico'], ['oferta', 'Oferta'], ['claro', 'Claro']].concat(TT_CARDS.ESTILOS);
+var AD_CLASICOS = {}; TT_CARDS.ESTILOS.forEach(function (e) { AD_CLASICOS[e[0]] = 1; });
+
 var AD_SERIF = 'Georgia,"Times New Roman",serif', AD_SANS = 'system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif';
 function precioDatos(st, p) {
   var pr = precioVigente({ p: num(p.precio), of: num(p.ofertaPrecio) > 0 ? { p: num(p.ofertaPrecio), h: p.ofertaFin } : null }, ahoraHabana().fecha);
@@ -3518,9 +6276,15 @@ function adContacto(cx, st, x, y, maxW, size, color, una) {
   return yy;
 }
 async function anuncioTarjeta(st, p, estilo, fmt) {
+  if (AD_CLASICOS[estilo]) {
+    var dd = precioDatos(st, p), sk = stockDe(p), lg = st.logo ? await bitmapFoto(st.logo) : null, im0 = p.fotos && p.fotos.length ? await bitmapFoto(p.fotos[0], window.__adPreferMini) : null;
+    var cfgC = { storeName: st.nombre || '', phone: st.wa || '', address: st.dir || '', currency: dd.cur, primaryColor: st.color || '#0a7c86', logo: lg, tagline: st.lema || '', fontStyle: 'moderna', cardTuning: {}, extraColors: [], mainColors: [], colorMode: 'single', categoryColors: {} };
+    var prodC = { id: p.id, name: p.nombre, price: dd.v, oldPrice: dd.oferta ? dd.antes : 0, category: catName(st, p.cat), qty: sk === null ? undefined : sk, isNew: !!(p.nuevo || (p.c > 1e12 && Date.now() - p.c < 30 * 864e5)), sku: p.sku || '', unit: '', promoLabel: '', urgencyLabel: '' };
+    return await TT_CARDS.render(cfgC, prodC, im0, estilo, 1080, fmt === 'v' ? 1920 : 1080);
+  }
   var W = 1080, H = fmt === 'v' ? 1920 : 1080, big = fmt === 'v', cv = document.createElement('canvas'); cv.width = W; cv.height = H;
   var cx = cv.getContext('2d'), col = st.color || '#0a7c86', acento = mezclar(col, .55, '#fff'), pad = 64, d = precioDatos(st, p);
-  var logo = st.logo ? await bitmapFoto(st.logo) : null, ims = []; for (var i = 0; i < Math.min(3, p.fotos.length); i++) { var b = await bitmapFoto(p.fotos[i]); if (b) ims.push(b); }
+  var logo = st.logo ? await bitmapFoto(st.logo) : null, ims = []; for (var i = 0; i < Math.min(3, p.fotos.length); i++) { var b = await bitmapFoto(p.fotos[i], window.__adPreferMini); if (b) ims.push(b); }
   var cat = catName(st, p.cat), marca = (st.nombre || '').toUpperCase() + ' ' + new Date().toLocaleDateString('es');
   var url = catalogURL(st) || ('https://wa.me/' + waNumero(st.wa));
   cx.textBaseline = 'alphabetic';
@@ -3610,6 +6374,8 @@ route(/^\/compartir$/, function () {
     <div class="card"><h2>Imagen para estados de WhatsApp</h2><p class="help" style="margin:0 0 10px">Tus productos con foto y precio y el QR de tu catálogo, listos para publicar.</p>
       <div class="fl" style="margin-bottom:8px"><button class="${fmt === 'c' ? 'on' : ''}" data-act="ad-fmt" data-v="c">Cuadrada</button><button class="${fmt === 'v' ? 'on' : ''}" data-act="ad-fmt" data-v="v">Vertical (estado)</button></div>
       <div class="fl" style="margin-bottom:8px">${AD_ESTILOS.map(function (e) { return html`<button class="${est === e[0] ? 'on' : ''}" data-act="ad-est" data-v="${e[0]}">${e[1]}</button>`; })}</div>
+      <div class="fl" style="margin-bottom:8px"><button class="${(APP.ui.adCal || 'normal') === 'rapida' ? 'on' : ''}" data-act="ad-cal" data-v="rapida">Rápida</button><button class="${(APP.ui.adCal || 'normal') === 'normal' ? 'on' : ''}" data-act="ad-cal" data-v="normal">Normal</button><button class="${(APP.ui.adCal || 'normal') === 'alta' ? 'on' : ''}" data-act="ad-cal" data-v="alta">Alta calidad</button></div>
+      <p class="help" style="margin:0 0 8px">«Rápida» usa miniaturas y comprime más (más ligera y veloz). «Alta calidad» prioriza nitidez.</p>
       <div class="help" style="margin-bottom:6px">${est === 'grid' ? html`1. Elige productos (<b id="ad-n">${sel.length}</b> elegidos) · hasta 6 en una imagen; si eliges más, se reparten en hojas grandes de 18` : html`1. Elige hasta 6 productos (<b id="ad-n">${sel.length}</b> elegidos) · se crea una imagen por producto`}</div>
       <div class="hz" style="margin-bottom:8px;gap:8px"><div class="sp" style="position:relative"><input class="in" id="ad-q" type="search" placeholder="Buscar producto…" value="${adQ}" style="border-radius:12px;padding-left:38px;min-height:42px"><span style="position:absolute;left:12px;top:11px;color:var(--mut)">${ic('search', 18)}</span></div>
         <button class="btn sm" data-act="ad-clear" ${sel.length ? '' : raw('disabled')} style="flex:0 0 auto">Quitar selección</button></div>
@@ -3657,25 +6423,58 @@ ACT['ad-pick'] = function (el) {
 };
 ACT['ad-make'] = async function () {
   var st = ST(), prods = (APP.ui.adSel || []).map(function (id) { return prodById(st, id); }).filter(Boolean), est = APP.ui.adEst || 'grid', fmt = APP.ui.adFmt || 'c';
-  var done = busy('Diseñando la imagen…'), out = $('#ad-out');
+  var cal = APP.ui.adCal || 'normal'; /* rapida | normal | alta */
+  var jpgQ = cal === 'rapida' ? 0.78 : (cal === 'alta' ? 0.92 : 0.88);
+  window.__adPreferMini = cal === 'rapida';
+  window.__adCancel = false;
+  var done = busy(cal === 'rapida' ? 'Diseñando (rápido)…' : 'Diseñando la imagen…'), out = $('#ad-out');
+  /* Botón cancelar sobre el busy */
+  try {
+    var busyEl = document.getElementById('busy');
+    if (busyEl && !document.getElementById('ad-cancel-btn')) {
+      var cb = document.createElement('button');
+      cb.id = 'ad-cancel-btn'; cb.className = 'btn sm'; cb.style.cssText = 'margin-top:14px';
+      cb.textContent = 'Cancelar'; cb.onclick = function () { window.__adCancel = true; };
+      busyEl.appendChild(cb);
+    }
+  } catch (eC) { }
   try {
     var blobs = [];
     if (est === 'grid' && prods.length > 6) {
       var HOJA = 18, nh = Math.ceil(prods.length / HOJA);
       for (var h = 0; h < nh; h++) {
+        if (window.__adCancel) throw new Error('cancelado');
         setBusyText('Diseñando hoja ' + (h + 1) + ' de ' + nh + '…');
-        var chj = await anuncioHoja(st, prods.slice(h * HOJA, (h + 1) * HOJA), h + 1, nh), bh = await toBlob(chj, 'image/jpeg', .88);
+        var chj = await anuncioHoja(st, prods.slice(h * HOJA, (h + 1) * HOJA), h + 1, nh), bh = await toBlob(chj, 'image/jpeg', jpgQ);
         chj.width = 1; chj.height = 1; if (bh) blobs.push(bh);
         await new Promise(function (r) { setTimeout(r, 0); });
       }
     }
-    else if (est === 'grid') { var cv = await anuncioCanvas(st, prods, fmt), b0 = await toBlob(cv, 'image/jpeg', .9); if (b0) blobs.push(b0); }
-    else for (var i = 0; i < prods.length; i++) { setBusyText('Diseñando ' + (i + 1) + ' de ' + prods.length + '…'); var c2 = await anuncioTarjeta(st, prods[i], est, fmt), b2 = await toBlob(c2, 'image/jpeg', .9); if (b2) blobs.push(b2); }
+    else if (est === 'grid') {
+      if (window.__adCancel) throw new Error('cancelado');
+      var cv = await anuncioCanvas(st, prods, fmt), b0 = await toBlob(cv, 'image/jpeg', jpgQ); if (b0) blobs.push(b0); cv.width = 1; cv.height = 1;
+    }
+    else for (var i = 0; i < prods.length; i++) {
+      if (window.__adCancel) throw new Error('cancelado');
+      setBusyText('Diseñando ' + (i + 1) + ' de ' + prods.length + '…');
+      var c2 = await anuncioTarjeta(st, prods[i], est, fmt), b2 = await toBlob(c2, 'image/jpeg', jpgQ);
+      if (b2) blobs.push(b2); c2.width = 1; c2.height = 1;
+      await new Promise(function (r) { setTimeout(r, 0); });
+    }
     done();
+    window.__adPreferMini = false;
+    try { var bx = document.getElementById('ad-cancel-btn'); if (bx) bx.remove(); } catch (eR) { }
     if (!blobs.length) throw new Error('No se pudo crear la imagen'); window._adL = blobs; window._ad = blobs[0];
     out.innerHTML = (blobs.length > 1 ? '<div class="wr" style="justify-content:center;margin-bottom:14px"><button class="btn pri sm" data-act="ad-share-all">' + ic('share', 16).s + 'Compartir / guardar las ' + blobs.length + ' juntas</button><button class="btn sm" data-act="ad-zip">' + ic('download', 16).s + 'Todas en un ZIP</button></div>' : '') + blobs.map(function (b, i) { return '<div style="margin-bottom:14px"><img class="pv" style="max-height:420px" src="' + URL.createObjectURL(b) + '" alt="Vista previa"><div class="wr" style="justify-content:center;margin-top:10px"><button class="btn pri sm" data-act="ad-share" data-i="' + i + '">' + ic('share', 16).s + 'Compartir / guardar</button></div></div>'; }).join('') + '<p class="help">Revisa los precios y textos antes de publicarla.</p>';
-  } catch (e) { done(); toast(e.message, 'bad'); }
+  } catch (e) {
+    window.__adPreferMini = false;
+    try { var bx2 = document.getElementById('ad-cancel-btn'); if (bx2) bx2.remove(); } catch (eR2) { }
+    done();
+    if (String(e.message || e) === 'cancelado') toast('Generación cancelada');
+    else toast(e.message, 'bad');
+  }
 };
+ACT['ad-cal'] = function (el) { APP.ui.adCal = el.getAttribute('data-v'); save(); refresh(); };
 ACT['ad-share-all'] = async function () {
   var bl = window._adL || []; if (!bl.length) return;
   var done = busy('Preparando ' + bl.length + ' imágenes…');
@@ -4018,6 +6817,8 @@ function autoMapear(rows, head) {
   return map;
 }
 var IMP = null;
+/* Las categorías de AxisPOS vienen como «|Grupo|Subgrupo»: se usa solo el último nivel y «Grupo de servicio» no es categoría */
+function limpiaCat(t) { var a = String(t || '').split('|').map(function (x) { return x.trim(); }).filter(Boolean), r = a.length ? a[a.length - 1] : ''; return norm(r) === 'grupo de servicio' ? '' : r; }
 route(/^\/excel$/, function () {
   var st = ST();
   var body = html`<div class="pg stack">
@@ -4055,6 +6856,8 @@ function pedirFotosCopia(conFoto, total) {
       MODAL.res = res;
       modal(html`<h2>Calidad de las fotos</h2><div class="card flat">
         <a class="li tap" data-act="m-pick" data-v="original" style="min-height:58px"><div class="tx"><b>Original (recomendado)</b><span>Tal como se ven en el catálogo, sin recomprimir. Pesan más.</span></div></a>
+        <a class="li tap" data-act="m-pick" data-v="alta" style="min-height:58px"><div class="tx"><b>Alta (~1600 px)</b><span>Casi original, más manejable en el teléfono.</span></div></a>
+        <a class="li tap" data-act="m-pick" data-v="media" style="min-height:58px"><div class="tx"><b>Media (~1000 px)</b><span>Buen equilibrio tamaño / nitidez.</span></div></a>
         <a class="li tap" data-act="m-pick" data-v="ajustes" style="min-height:58px"><div class="tx"><b>La de Ajustes (${NM[cur] || cur})</b><span>Se reducen y comprimen según ese ajuste.</span></div></a></div>`);
     }).then(function (cal) { return cal ? { modo: modo, cal: cal } : null; });
   });
@@ -4069,7 +6872,11 @@ async function importarFotosCopia(f) {
     done(); done = function () { };
     var opc = await pedirFotosCopia(st.prods.filter(function (p) { return p.fotos.length; }).length, st.prods.length);
     if (!opc) return;
-    var reemplazar = opc.modo === 'todas'; if (opc.cal === 'original') APP.cfg.calidad = 'original';
+    var reemplazar = opc.modo === 'todas';
+    if (opc.cal === 'original') APP.cfg.calidad = 'original';
+    else if (opc.cal === 'alta') APP.cfg.calidad = 'alta';
+    else if (opc.cal === 'media') APP.cfg.calidad = 'media';
+    /* «ajustes» deja APP.cfg.calidad como está */
     done = busy('Importando fotos…');
     var bySku = {}, byNom = {}; st.prods.forEach(function (p) { if (p.sku) bySku[skuKey(p.sku)] = p; byNom[norm(p.nombre)] = p; });
     var ok = 0, fotos = 0, porNombre = 0, yaTenia = 0, sinFoto = 0, sinMatch = [], i, k;
@@ -4115,27 +6922,31 @@ ACT['imp-map'] = function (el) { IMP.map[el.getAttribute('data-k')] = el.value =
 ACT['imp-go'] = function () {
   var st = ST(), m = IMP.map; if (m.nombre === undefined) { toast('Elige la columna del nombre', 'bad'); return; }
   IMP.upd = $('#imp-upd').checked; var add = 0, upd = 0, skip = 0, cats = {}, tocados = {}, conStock = []; st.cats.forEach(function (c) { cats[norm(c.n)] = c.id; });
+  st.cats.forEach(function (c) { var lc = limpiaCat(c.n); if (lc && lc !== c.n && !cats[norm(lc)]) cats[norm(lc)] = c.id; });
   var idx = {}, sidx = {}; st.prods.forEach(function (p) { idx[norm(p.nombre)] = p; if (p.sku) sidx[skuKey(p.sku)] = p; });
   var g = function (r, k) { return m[k] === undefined ? '' : String(r[m[k]] == null ? '' : r[m[k]]).trim(); };
   IMP.rows.slice(1).forEach(function (r, fi) {
     var nombre = g(r, 'nombre'); if (!nombre) { skip++; return; }
-    var cn = g(r, 'cat'), cid = ''; if (cn) { cid = cats[norm(cn)]; if (!cid) { cid = uid(); cats[norm(cn)] = cid; st.cats.push({ id: cid, n: cn }); } }
+    var cn = limpiaCat(g(r, 'cat')), cid = ''; if (cn) { cid = cats[norm(cn)]; if (!cid) { cid = uid(); cats[norm(cn)] = cid; st.cats.push({ id: cid, n: cn }); } }
     var mon = g(r, 'moneda').toUpperCase(), sk = g(r, 'sku'), ex = (sk && sidx[skuKey(sk)]) || idx[norm(nombre)];
     /* dos filas del archivo con distinto SKU son dos productos, aunque se llamen igual: no se pisan entre sí */
     if (ex && tocados[ex.id] && !(sk && ex.sku && skuKey(ex.sku) === skuKey(sk))) ex = null;
-    var vals = { sku: sk, precio: g(r, 'precio') === '' ? '' : num(g(r, 'precio')), desc: g(r, 'desc'), unidad: g(r, 'unidad'), st: g(r, 'st') === '' ? '' : Math.max(0, Math.round(num(g(r, 'st')) * 1000) / 1000), costo: g(r, 'costo') === '' ? '' : num(g(r, 'costo')), moneda: MONEDAS.indexOf(mon) >= 0 && mon !== st.mp ? mon : '' };
+    var vals = { sku: sk, precio: g(r, 'precio') === '' ? '' : num(g(r, 'precio')), desc: g(r, 'desc'), unidad: g(r, 'unidad'), st: g(r, 'st') === '' ? (m.st !== undefined ? 0 : '') : Math.max(0, Math.round(num(g(r, 'st')) * 1000) / 1000), costo: g(r, 'costo') === '' ? '' : num(g(r, 'costo')), moneda: MONEDAS.indexOf(mon) >= 0 && mon !== st.mp ? mon : '' };
     var fin;
     if (ex) { if (!IMP.upd) { skip++; return; } Object.keys(vals).forEach(function (k) { if (m[k] !== undefined && vals[k] !== '') ex[k] = vals[k]; }); if (cid) ex.cat = cid; ex.u = Date.now(); upd++; fin = ex; if (sk) sidx[skuKey(sk)] = ex; }
     else { var p = nuevoProducto(st); p.nombre = nombre; p.cat = cid; Object.keys(vals).forEach(function (k) { p[k] = vals[k]; }); st.prods.push(p); idx[norm(nombre)] = p; if (sk) sidx[skuKey(sk)] = p; add++; fin = p; }
     tocados[fin.id] = 1;
     if (vals.st !== '' && vals.st > 0) conStock.push({ fila: fi + 2, sku: sk, nombre: nombre, st: vals.st, p: fin });
   });
+  /* el archivo trae solo lo que hay: lo que no viene (con SKU, o que ya tenía existencias) pasa a 0, o sea agotado. Solo con la columna de existencias elegida, «actualizar» marcado y un archivo con varios productos (no una lista suelta) */
+  var aus = 0;
+  if (m.st !== undefined && IMP.upd && (add + upd) >= 20) st.prods.forEach(function (p) { if (!tocados[p.id] && (p.sku || num(p.st) > 0) && !(p.st !== '' && p.st != null && num(p.st) === 0)) { p.st = 0; p.u = Date.now(); aus++; } });
   touch(st); IMP = null;
   var libre = function (p) { var s = stockDe(p); return !(!p.disp || (s !== null && s <= 0)); };
   var nDisp = st.prods.filter(libre).length, falt = conStock.filter(function (c) { return !libre(c.p); });
   IMP_FALT = falt.map(function (c) { return c.p.id; }).filter(function (id, i, a) { return a.indexOf(id) === i; });
   var det = falt.slice(0, 8).map(function (c) { var s = stockDe(c.p); return esc((c.sku ? c.sku + ' · ' : '') + c.nombre) + ' (fila ' + c.fila + ': ' + c.st + ' en el archivo → ' + (s === null ? 'sin dato' : s) + ' en el panel' + (!c.p.disp ? '; está marcado como no disponible' : '; otra fila del archivo lo dejó sin existencias') + ')'; }).join('<br>');
-  $('#imp-out').innerHTML = '<div class="banner info" style="margin-top:12px"><b>Listo.</b> ' + add + ' nuevos, ' + upd + ' actualizados' + (skip ? ', ' + skip + ' omitidos' : '') + '. Ahora hay <b>' + nDisp + '</b> productos disponibles de ' + st.prods.length + '.' +
+  $('#imp-out').innerHTML = '<div class="banner info" style="margin-top:12px"><b>Listo.</b> ' + add + ' nuevos, ' + upd + ' actualizados' + (skip ? ', ' + skip + ' omitidos' : '') + (aus ? ', ' + aus + ' que no venían en el archivo quedaron en 0 (agotados)' : '') + '. Ahora hay <b>' + nDisp + '</b> productos disponibles de ' + st.prods.length + '.' +
     (conStock.length ? ' El archivo traía ' + conStock.length + ' filas con existencias.' : '') +
     (falt.length ? '<br><b>' + falt.length + ' con existencias en el archivo no quedaron disponibles:</b><br>' + det + (falt.length > 8 ? '<br>…y ' + (falt.length - 8) + ' más.' : '') + (falt.some(function (c) { return !c.p.disp; }) ? '<br><button class="btn sm" style="margin-top:8px" data-act="imp-activar">Marcar como disponibles los que están desactivados</button>' : '') : '') +
     '<br>Agrega fotos desde la lista de productos y publica.</div>';
@@ -4163,8 +6974,15 @@ function idsBackup() {
   [st0.logo, st0.portada, st0.espec].forEach(function (x) { if (x && ids.indexOf(x) < 0) ids.push(x); });
   return ids;
 }
-/* nivel: 'mini' = miniaturas (liviano) · 'completa' = foto grande + miniatura tal como están guardadas, sin recomprimir.
+/* nivel: 'mini' | 'media' (~1000px) | 'alta' (~1600px) | 'completa' (original, sin recomprimir).
    parte {i, n}: solo las fotos de la tanda i (para copias grandes en varios archivos) */
+function sufijoCalidadBk(nivel, conFotos) {
+  if (!conFotos) return '-sin-fotos';
+  if (nivel === 'completa') return '';
+  if (nivel === 'alta') return '-alta';
+  if (nivel === 'media') return '-media';
+  return '-miniaturas';
+}
 async function crearBackup(conFotos, nivel, parte) {
   var Z = await jszip(), zip = new Z();
   var data = JSON.parse(JSON.stringify(APP));
@@ -4192,6 +7010,12 @@ async function crearBackup(conFotos, nivel, parte) {
         if (nivel === 'completa') {
           if (r.g) zip.file('fotos/' + r.id + '-g.bin', r.g);
           if (r.t && r.t !== r.g) zip.file('fotos/' + r.id + '-t.bin', r.t);
+        } else if (nivel === 'alta' || nivel === 'media') {
+          var src = r.g || r.t;
+          var mid = await fotoCatalogo(src, nivel === 'alta' ? 'normal' : 'buena');
+          if (mid) zip.file('fotos/' + r.id + '-g.bin', mid);
+          else if (r.t) zip.file('fotos/' + r.id + '-g.bin', r.t);
+          else if (r.g) zip.file('fotos/' + r.id + '-g.bin', r.g);
         } else {
           var blob = r.t || r.g;
           if (blob) zip.file('fotos/' + r.id + '-g.bin', blob);
@@ -4217,8 +7041,21 @@ function pedirCalidadBackup() {
   return new Promise(function (res) {
     MODAL.res = res;
     modal(html`<h2>Calidad de las fotos</h2><p class="help">${n} fotos en esta tienda.</p><div class="card flat">
-      <a class="li tap" data-act="m-pick" data-v="completa" style="min-height:58px"><div class="tx"><b>Alta calidad (recomendado)</b><span>Las fotos como están guardadas, sin recomprimir. Pesa más; si son muchas se divide en varios archivos.</span></div></a>
-      <a class="li tap" data-act="m-pick" data-v="mini" style="min-height:58px"><div class="tx"><b>Miniaturas</b><span>Muy liviana, pero las fotos quedan pequeñas al restaurar.</span></div></a></div>`);
+      <a class="li tap" data-act="m-pick" data-v="completa" style="min-height:58px"><div class="tx"><b>Original (máxima)</b><span>Las fotos tal como están guardadas, sin recomprimir. El archivo más pesado; ideal para archivo completo.</span></div></a>
+      <a class="li tap" data-act="m-pick" data-v="alta" style="min-height:58px"><div class="tx"><b>Alta calidad</b><span>Recomprime a ~1600 px. Casi original, más manejable.</span></div></a>
+      <a class="li tap" data-act="m-pick" data-v="media" style="min-height:58px"><div class="tx"><b>Calidad media (recomendada)</b><span>~1000 px. Buen equilibrio para WhatsApp, Drive o Telegram.</span></div></a>
+      <a class="li tap" data-act="m-pick" data-v="mini" style="min-height:58px"><div class="tx"><b>Miniaturas</b><span>Muy liviana y rápida. Las fotos quedan pequeñas al restaurar.</span></div></a></div>`);
+  });
+}
+/* Al restaurar fotos: calidad de destino (tal cual del zip, o bajar) */
+function pedirCalidadRestaurar(ab) {
+  return new Promise(function (res) {
+    MODAL.res = res;
+    var info = ab && ab.lado ? html`<p class="help">Las fotos de la copia llegan hasta ~${ab.lado} px.</p>` : '';
+    modal(html`<h2>Calidad al restaurar</h2>${info}<div class="card flat">
+      <a class="li tap" data-act="m-pick" data-v="talcual" style="min-height:58px"><div class="tx"><b>Tal como vienen (recomendado)</b><span>Sin recomprimir. Si ya tienes una foto mejor en el teléfono, se conserva.</span></div></a>
+      <a class="li tap" data-act="m-pick" data-v="media" style="min-height:58px"><div class="tx"><b>Bajar a media (~1000 px)</b><span>Ahorra espacio. Útil si la copia es muy pesada.</span></div></a>
+      <a class="li tap" data-act="m-pick" data-v="mini" style="min-height:58px"><div class="tx"><b>Solo miniaturas</b><span>La más liviana. Solo para ver el catálogo; no apta para publicar.</span></div></a></div>`);
   });
 }
 /* Abre la copia y cuenta lo que trae (tiendas, fotos y el tamaño de las fotos) */
@@ -4246,16 +7083,26 @@ function pedirModoRestaurar(ab) {
       <p class="help" style="margin-top:8px">Si el teléfono ya tiene una foto de mayor calidad que la de la copia, se conserva la mejor.</p>`);
   });
 }
-async function restaurarBackup(file, modo, ab) {
-  ab = ab || await abrirBackup(file); modo = modo || 'todo';
+async function restaurarBackup(file, modo, ab, calRest) {
+  ab = ab || await abrirBackup(file); modo = modo || 'todo'; calRest = calRest || 'talcual';
   var zip = ab.zip, j = ab.j, n = 0, mantenidas = 0, tot = ab.ids.length;
   if (modo !== 'datos') {
     for (var k = 0; k < tot; k++) {
       var id = ab.ids[k], g = zip.file((ab.pre || '') + 'fotos/' + id + '-g.bin'), t = zip.file((ab.pre || '') + 'fotos/' + id + '-t.bin');
       var gb = g ? new Blob([await g.async('arraybuffer')], { type: 'image/webp' }) : null, tb = t ? new Blob([await t.async('arraybuffer')], { type: 'image/webp' }) : gb;
+      /* Opcional: bajar calidad al restaurar */
+      if (calRest === 'media' && gb) {
+        try { gb = await fotoCatalogo(gb, 'buena') || gb; tb = gb; } catch (eM) { }
+      } else if (calRest === 'mini' && (gb || tb)) {
+        try {
+          var srcM = tb || gb;
+          var miniB = await fotoCatalogo(srcM, 'mini');
+          gb = miniB || srcM; tb = gb;
+        } catch (eMi) { }
+      }
       var ex = null; try { ex = await fotoGet(id); } catch (e0) { ex = null; }
-      /* nunca bajar la calidad: si el teléfono ya tiene una versión más pesada (más detalle), se conserva */
-      if (ex) {
+      /* Si se eligió «tal cual», nunca bajar: se conserva la mejor del teléfono */
+      if (ex && calRest === 'talcual') {
         if (ex.g && ex.g.size && (!gb || ex.g.size >= gb.size)) { if (gb) mantenidas++; gb = ex.g; }
         if (ex.t && ex.t.size && (!tb || ex.t.size >= tb.size)) tb = ex.t;
       }
@@ -4296,13 +7143,17 @@ async function flujoRestaurar() {
     } catch (e0) { d0(); toast(e0.message || 'No se pudo restaurar', 'bad', 5000); return; }
   }
   var f = await elegirArchivo('.zip,application/zip,application/octet-stream'); if (!f) return;
-  var done = busy('Leyendo la copia…'), ab, modo;
+  var done = busy('Leyendo la copia…'), ab, modo, calRest = 'talcual';
   try { ab = await abrirBackup(f); done(); } catch (e) { done(); toast(e.message || 'No se pudo leer la copia', 'bad', 5000); return; }
   modo = ab.ids.length ? await pedirModoRestaurar(ab) : ((await confirmar('¿Restaurar esta copia?', 'Restaurar', false, 'Las tiendas de la copia reemplazan a las que tengan el mismo identificador. Esta copia no trae fotos.')) ? 'datos' : null);
   if (!modo) return;
+  if (modo !== 'datos' && ab.ids.length) {
+    calRest = await pedirCalidadRestaurar(ab);
+    if (!calRest) return;
+  }
   await guardar();
   done = busy('Restaurando…');
-  try { var r = await restaurarBackup(f, modo, ab); done(); toast(msgRestaurado(r), 'ok', 5000); go('/'); } catch (e3) { done(); toast(e3.message || 'No se pudo restaurar', 'bad', 5000); }
+  try { var r = await restaurarBackup(f, modo, ab, calRest); done(); toast(msgRestaurado(r), 'ok', 5000); go('/'); } catch (e3) { done(); toast(e3.message || 'No se pudo restaurar', 'bad', 5000); }
 }
 
 /* ---------------- Cuenta y conexión ---------------- */
@@ -4656,7 +7507,7 @@ publicar = async function (st, o) {
     if (st.espec && P(st.espec)) setPath(base, 'especialidades.foto', P(st.espec));
     if (APP.cfg.fb && APP.cfg.fb.url && st.slug) setPath(base, 'firebase', { url: String(APP.cfg.fb.url).replace(/\/+$/, ''), slug: st.slug });
     var oc = {}; (base.categorias || []).forEach(function (x) { oc[x.id] = x; });
-    base.categorias = st.cats.map(function (x) { return { id: x.id, nombre: x.n, icono: (oc[x.id] || {}).icono || 'caja' }; });
+    base.categorias = st.cats.map(function (x) { return { id: x.id, nombre: limpiaCat(x.n) || x.n, icono: (oc[x.id] || {}).icono || 'caja' }; });
     var op = {}; (base.productos || []).forEach(function (x) { op[x.id] = x; }); var top = {}; st.prods.filter(function (q) { return +q.vend >= 1; }).sort(function (a, b) { return b.vend - a.vend; }).slice(0, 24).forEach(function (q) { top[q.id] = 1; }); var hoy = ahoraHabana().fecha;
     base.productos = st.prods.filter(function (p) { return p.nombre; }).map(function (p, i) {
       var o0 = op[p.id] || {}, cur = monedaDe(st, p), stk = stockDe(p), ph = p.fotos.slice(0, 5).map(P).filter(Boolean);
@@ -4820,9 +7671,15 @@ async function srvEstado(ms) {
 async function srvSync(ms) {
   var j = await srvEstado(ms), st = ST(); if (!st) throw new Error('Primero trae o crea la tienda.');
   var bySku = {}, byNom = {}; st.prods.forEach(function (p) { if (p.sku) bySku[skuKey(p.sku)] = p; byNom[nz(p.nombre)] = p; });
-  var n = 0, sin = 0, ahora = Date.now(), primera = !st.srvT, lote = [], vistos = {}, cambioPrecio = 0, sinReg = 0, reactivados = 0;
+  var n = 0, sin = 0, ahora = Date.now(), primera = !st.srvT, lote = [], vistos = {}, cambioPrecio = 0, sinReg = 0, reactivados = 0, creados = 0;
   j.items.forEach(function (it) {
-    var p = (it.sku && bySku[skuKey(it.sku)]) || byNom[nz(it.nombre)]; if (!p) { sin++; return; }
+    var p = (it.sku && bySku[skuKey(it.sku)]) || byNom[nz(it.nombre)], nuevoSrv = false;
+    if (!p) {
+      /* está en el servidor y no en el panel: se agrega con su nombre, SKU, precio y existencias */
+      var nm = String(it.nombre || '').trim(); if (!nm) { sin++; return; }
+      p = nuevoProducto(st); p.nombre = nm; p.sku = it.sku ? String(it.sku).trim() : ''; p.u = ahora;
+      st.prods.push(p); if (p.sku) bySku[skuKey(p.sku)] = p; byNom[nz(nm)] = p; creados++; nuevoSrv = true;
+    }
     var antes = stockDe(p);
     if (it.stock != null) p.st = Math.max(0, Math.round(it.stock * 1000) / 1000); /* conserva decimales (0,4 m de cable no es agotado) */
     else if (p.st !== '' && p.st != null && num(p.st) > 0) { p.st = 0; sinReg++; } /* el sistema ya no tiene registro de existencias de un producto que tenía: se agotó */
@@ -4834,17 +7691,20 @@ async function srvSync(ms) {
     p.vend = +it.vendido || 0; n++; vistos[p.id] = 1;
     /* precio: si cambió en el sistema, el catálogo lo toma (solo productos en la moneda base) */
     var np = Number(it.precio);
-    if (isFinite(np) && np > 0 && monedaDe(st, p) === st.mp && Math.abs(num(p.precio) - np) > 0.004) { p.precio = np; if (num(p.ofertaPrecio) >= np) { p.ofertaPrecio = ''; } cambioPrecio++; p.u = ahora; }
+    if (isFinite(np) && np > 0 && monedaDe(st, p) === st.mp && Math.abs(num(p.precio) - np) > 0.004) { p.precio = np; if (num(p.ofertaPrecio) >= np) { p.ofertaPrecio = ''; } if (!nuevoSrv) cambioPrecio++; p.u = ahora; }
   });
   /* un producto con control de existencias que el sistema ya no lista (se agotó y salió de su lista) pasa a agotado */
   var ausentes = 0;
   if (j.items.length) st.prods.forEach(function (p) { if (p.sku && !vistos[p.id] && p.st !== '' && p.st != null && num(p.st) > 0) { p.st = 0; ausentes++; } });
   if (lote.length) { st.srvLote = ahora; lote.forEach(function (p) { p.llego = ahora; }); }
   st.srvT = ahora;
-  st.dirty = true; save(true); return { n: n, sin: sin, ventas: j.ventas, llegaron: lote.length, precios: cambioPrecio, agotados: ausentes + sinReg, reactivados: reactivados };
+  /* tasa del dólar de la PC (CUP por 1 USD): el panel la toma */
+  var tasaNueva = Number(j.tasaDolar) || 0, tasaCambio = false;
+  if (tasaNueva > 0) { st.tasas = st.tasas || {}; if (num(st.tasas.USD) !== tasaNueva || st.tasaFuente !== 'manual') { st.tasas.USD = tasaNueva; st.tasaFuente = 'manual'; (st.flags = st.flags || {}).monedas = true; tasaCambio = true; } }
+  st.dirty = true; save(true); return { tasa: tasaNueva, tasaCambio: tasaCambio, n: n, sin: sin, ventas: j.ventas, llegaron: lote.length, precios: cambioPrecio, agotados: ausentes + sinReg, reactivados: reactivados, creados: creados, sinPrecio: j.items.length > 0 && !j.items.some(function (x) { return x.precio != null; }) };
 }
-ACT['srv-test'] = async function () { var done = busy('Probando…'); try { var j = await srvEstado(); done(); toast('Conectado: ' + j.cantidad + ' productos' + (j.ventas ? ' con ventas ✓' : ' (sin ventas: AxisPOS no activo)'), '', 4500); } catch (e) { done(); toast(e.message, 'bad', 5000); } };
-ACT['srv-sync'] = async function () { var done = busy('Leyendo stock y ventas…'); try { var r = await srvSync(); done(); toast(r.n + ' productos actualizados' + (r.llegaron ? ' · ' + r.llegaron + ' llegaron o volvieron a tener cantidad' : '') + (r.precios ? ' · ' + r.precios + ' con precio nuevo' : '') + (r.reactivados ? ' · ' + r.reactivados + ' volvieron a disponibles' : '') + (r.agotados ? ' · ' + r.agotados + ' se agotaron (ya no están en el sistema)' : '') + (r.sin ? ' · ' + r.sin + ' del servidor no están en el panel' : ''), '', 5500); refresh(); } catch (e) { done(); toast(e.message, 'bad', 5000); } };
+ACT['srv-test'] = async function () { var done = busy('Probando…'); try { var j = await srvEstado(); done(); toast('Conectado: ' + j.cantidad + ' productos' + (j.tasaDolar > 0 ? ' · dólar a ' + j.tasaDolar + ' CUP' : '') + (j.ventas ? ' con ventas ✓' : ' (sin ventas: AxisPOS no activo)'), '', 4500); } catch (e) { done(); toast(e.message, 'bad', 5000); } };
+ACT['srv-sync'] = async function () { var done = busy('Leyendo stock y ventas…'); try { var r = await srvSync(); done(); toast(r.n + ' productos actualizados' + (r.llegaron ? ' · ' + r.llegaron + ' llegaron o volvieron a tener cantidad' : '') + (r.precios ? ' · ' + r.precios + ' con precio nuevo' : '') + (r.reactivados ? ' · ' + r.reactivados + ' volvieron a disponibles' : '') + (r.creados ? ' · ' + r.creados + ' nuevos agregados desde el servidor' : '') + (r.tasa > 0 ? ' · dólar a ' + r.tasa + ' CUP' + (r.tasaCambio ? ' (actualizada)' : '') : '') + (r.sinPrecio ? ' · OJO: el servidor no manda precios (reemplaza servidor_pedidos.ps1 por el nuevo y reinícialo)' : '') + (r.agotados ? ' · ' + r.agotados + ' se agotaron (ya no están en el sistema)' : '') + (r.sin ? ' · ' + r.sin + ' del servidor no están en el panel' : ''), '', 5500); refresh(); } catch (e) { done(); toast(e.message, 'bad', 5000); } };
 ROUTES.unshift([/^\/conexion$/, function () {
   var c = APP.cfg, sv = c.srv || (c.srv = { url: '', dias: 30 }), g = G(), st = ST(), S = (st && st.sitio) || {}; bindTo(c, false, function (f) { save(); syncAuth(); if (f === 'ai.prov') refresh(); });
   var body = html`<div class="pg stack"><div class="card"><h2>GitHub (tu sitio)</h2><p class="help" style="margin:0 0 6px">El panel publica directo en el repositorio de tu web. No usa Firebase ni imgbb. Usa un token «fine-grained» solo de ese repositorio con permiso <b>Contents: Read and write</b>.</p>
@@ -4932,8 +7792,9 @@ async function crearBackupNativo(conFotos, nivel) {
   var ids = conFotos ? idsBackup() : [];
   setBusyText(conFotos ? ('Empaquetando ' + ids.length + ' foto(s) en nativo…') : 'Preparando copia nativa…');
   var st = ST();
-  var nom = 'catalogo-copia-' + ((st && st.slug) || 'tienda') + '-' + new Date().toISOString().slice(0, 10) +
-    (conFotos ? (nivel === 'completa' ? '' : '-miniaturas') : '-sin-fotos') + '.zip';
+  var nom = 'catalogo-copia-' + ((st && st.slug) || 'tienda') + '-' + new Date().toISOString().slice(0, 10) + sufijoCalidadBk(nivel, conFotos) + '.zip';
+  /* El plugin nativo solo distingue completa vs mini; media/alta se hacen por JS */
+  if (nivel === 'media' || nivel === 'alta') throw new Error('media-via-js');
   var r = await P.crear({
     datosJson: datosJson,
     fotoIds: ids,
@@ -4976,14 +7837,17 @@ ACT['bk-crear'] = async function (el) {
           refresh();
           return;
         } catch (ne) {
-          console.warn('[backup nativo]', ne);
-          toast('Nativo falló (' + ((ne && ne.message) || ne) + '). Probando modo web…', 'bad', 3500);
+          var msgN = (ne && ne.message) || String(ne);
+          if (msgN !== 'media-via-js') {
+            console.warn('[backup nativo]', ne);
+            toast('Nativo falló (' + msgN + '). Probando modo web…', 'bad', 3500);
+          }
           /* sigue al flujo JS de abajo */
         }
       }
       done = busy(conFotos ? 'Preparando la copia con fotos…' : 'Preparando la copia…');
       /* Un solo ZIP: el navegador bloquea descargas repetidas si se parten en varios archivos */
-      var base = 'catalogo-copia-' + ((st && st.slug) || 'tienda') + '-' + new Date().toISOString().slice(0, 10) + (conFotos ? (nivel === 'completa' ? '' : '-miniaturas') : '-sin-fotos'), r = '';
+      var base = 'catalogo-copia-' + ((st && st.slug) || 'tienda') + '-' + new Date().toISOString().slice(0, 10) + sufijoCalidadBk(nivel, conFotos), r = '';
       var totalFotos = 0, ultimoMb = 0;
       var blob = await crearBackup(conFotos, nivel, null), nom = base + '.zip';
       totalFotos += (blob._fotosOk || 0);
@@ -5020,7 +7884,7 @@ ACT['bk-crear'] = async function (el) {
         <p class="help" style="margin:0 0 8px">Tus datos viven solo en este teléfono. Si cambias de teléfono, desinstalas la app o borras los datos, se pierden. Guarda una copia fuera de aquí (Telegram, Drive, WhatsApp o la PC).</p>
         <p style="margin:0 0 10px"><span class="chip ${viejo ? 'bad' : 'ok'}">Última copia: ${fecha(ult)}</span> <span class="help">· ${n} productos</span></p>
         <div class="wr"><button class="btn pri sm" data-act="bk-crear" data-v="1">Copia con fotos</button><button class="btn sm" data-act="bk-crear" data-v="0">Copia sin fotos</button></div>
-        <p class="help" style="margin:8px 0 0">Con fotos incluye miniaturas de los productos usados (para no cerrar la app). Sin fotos es más rápida. Las fotos a tamaño completo ya publicadas siguen en GitHub. La copia no incluye claves ni el token.</p></div>
+        <p class="help" style="margin:8px 0 0">Con fotos eliges Original, Alta (~1600 px), Media (~1000 px) o Miniaturas. Sin fotos es más rápida. Al restaurar también puedes bajar la calidad. Las fotos a tamaño completo ya publicadas siguen en GitHub. La copia no incluye claves ni el token.</p></div>
       <div class="card"><h2>Restaurar una copia</h2><p class="help" style="margin:0 0 8px">Elige un archivo .zip creado con este panel. Se actualizan las tiendas que coinciden y se agregan las demás.</p><button class="btn sm" data-act="bk-restaurar">Elegir copia…</button></div>
       <div class="card"><h2>Copias automáticas del teléfono</h2><p class="help" style="margin:0 0 6px">El panel guarda solo las últimas 3 (una cada 6 horas). Sirven si algo se daña, pero no si cambias de teléfono: para eso haz la copia de arriba.</p><div id="bk-lista"></div></div></div>`;
     return { title: 'Copia de seguridad', back: '/menu', nav: 'menu', body: body, after: pintarSnaps };
