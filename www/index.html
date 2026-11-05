@@ -7668,6 +7668,24 @@ async function srvEstado(ms) {
   var j = await r.json().catch(function () { return {}; });
   if (!r.ok || !j.ok) throw new Error(j.error || 'El servidor no tiene el enlace nuevo (ver servidor_pedidos.ps1 actualizado).'); return j;
 }
+/* Datos del negocio para el catálogo de clientes del servidor (horario, logo, portada, aviso y pago por defecto). Solo se reenvía si cambió algo. */
+var AVISO_DEF = 'Si realiza el pago en efectivo se le hace un descuento de la mitad del precio del producto.';
+async function srvPushInfo(st, ms) {
+  var sv = APP.cfg.srv || {}, u = String(sv.url || '').trim().replace(/\/+$/, ''); if (!u) return; if (!/^https?:\/\//.test(u)) u = 'http://' + u;
+  var info = { nombre: st.nombre || '', frase: st.frase || '', sobre: String(st.sobre || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim(), color: st.color || '#0a7c86', wa: st.wa || '', dir: st.dir || '', lat: st.lat || '', lng: st.lng || '',
+    hor: st.hor || [], esp: st.esp || [], cierre: !!st.cierre, msgCierre: st.msgCierre || '', pagos: st.pagos || [],
+    aviso: sv.tiendaAviso == null ? AVISO_DEF : String(sv.tiendaAviso), metodoDefecto: sv.tiendaMetodo || 'Transferencia' };
+  var clave = JSON.stringify(info) + '|' + (st.logo || '') + '|' + (st.portada || '') + '|' + u;
+  if (sv.tiendaHash === clave) return;
+  var img = async function (id, lado) {
+    if (!id) return ''; var b = await bitmapFoto(id); if (!b) return '';
+    var k = document.createElement('canvas'), r = Math.min(1, lado / Math.max(b.width, b.height)); k.width = Math.round(b.width * r); k.height = Math.round(b.height * r);
+    k.getContext('2d').drawImage(b, 0, 0, k.width, k.height); return k.toDataURL('image/jpeg', .82);
+  };
+  var body = { info: info, logo: await img(st.logo, 320), portada: await img(st.portada, 1100) };
+  var r = await fetchT(u + '/api/tienda/info', { method: 'POST', body: JSON.stringify(body) }, ms || 30000), j = await r.json().catch(function () { return {}; });
+  if (r.ok && j.ok) { sv.tiendaHash = clave; save(); }
+}
 async function srvSync(ms) {
   var j = await srvEstado(ms), st = ST(); if (!st) throw new Error('Primero trae o crea la tienda.');
   var bySku = {}, byNom = {}; st.prods.forEach(function (p) { if (p.sku) bySku[skuKey(p.sku)] = p; byNom[nz(p.nombre)] = p; });
@@ -7701,6 +7719,7 @@ async function srvSync(ms) {
   /* tasa del dólar de la PC (CUP por 1 USD): el panel la toma */
   var tasaNueva = Number(j.tasaDolar) || 0, tasaCambio = false;
   if (tasaNueva > 0) { st.tasas = st.tasas || {}; if (num(st.tasas.USD) !== tasaNueva || st.tasaFuente !== 'manual') { st.tasas.USD = tasaNueva; st.tasaFuente = 'manual'; (st.flags = st.flags || {}).monedas = true; tasaCambio = true; } }
+  try { await srvPushInfo(st, ms); } catch (e) { }
   st.dirty = true; save(true); return { tasa: tasaNueva, tasaCambio: tasaCambio, n: n, sin: sin, ventas: j.ventas, llegaron: lote.length, precios: cambioPrecio, agotados: ausentes + sinReg, reactivados: reactivados, creados: creados, sinPrecio: j.items.length > 0 && !j.items.some(function (x) { return x.precio != null; }) };
 }
 ACT['srv-test'] = async function () { var done = busy('Probando…'); try { var j = await srvEstado(); done(); toast('Conectado: ' + j.cantidad + ' productos' + (j.tasaDolar > 0 ? ' · dólar a ' + j.tasaDolar + ' CUP' : '') + (j.ventas ? ' con ventas ✓' : ' (sin ventas: AxisPOS no activo)'), '', 4500); } catch (e) { done(); toast(e.message, 'bad', 5000); } };
@@ -7717,6 +7736,8 @@ ROUTES.unshift([/^\/conexion$/, function () {
     <div class="card"><h2>Servidor de pedidos (PC)</h2><p class="help" style="margin:0 0 6px">Trae el stock y lo que más se vende desde tu servidor (misma WiFi). Al publicar se actualiza solo: agotados, nuevos y más vendidos en la web.</p>
     <label class="lbl">Dirección del servidor</label><input class="in" data-f="srv.url" value="${sv.url}" placeholder="http://192.168.1.5:8080" autocapitalize="none">
     <label class="lbl">Días para contar ventas</label><input class="in" type="number" data-f="srv.dias" value="${sv.dias}">
+    <label class="lbl">Catálogo de clientes: pago por defecto</label><select class="in" data-f="srv.tiendaMetodo"><option value="Transferencia"${(sv.tiendaMetodo || 'Transferencia') === 'Transferencia' ? ' selected' : ''}>Transferencia (precio x2)</option><option value="Efectivo"${sv.tiendaMetodo === 'Efectivo' ? ' selected' : ''}>Efectivo</option><option value="USD"${sv.tiendaMetodo === 'USD' ? ' selected' : ''}>USD (desde el precio en efectivo)</option></select>
+    <label class="lbl">Catálogo de clientes: aviso arriba</label><input class="in" data-f="srv.tiendaAviso" value="${sv.tiendaAviso == null ? AVISO_DEF : sv.tiendaAviso}" placeholder="Texto que ven los clientes sobre el método de pago">
     <div class="wr" style="margin-top:10px"><button class="btn pri sm" data-act="srv-test">Probar</button><button class="btn sm" data-act="srv-sync">Traer stock y ventas</button></div></div>
     <div class="card"><h2>Pedidos y visitas (Firebase)</h2><p class="help" style="margin:0 0 6px">Los pedidos de WhatsApp y las visitas de tu web llegan solos al panel. Crea un proyecto en Firebase con Realtime Database y Authentication (correo y contraseña), y crea ahí tu usuario.</p>
       <label class="lbl">Dirección de la base de datos</label><input class="in" data-f="fb.url" value="${(c.fb || {}).url || ''}" placeholder="https://tu-proyecto-default-rtdb.firebaseio.com" autocapitalize="none">
