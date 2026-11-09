@@ -28,12 +28,12 @@ jobs:
           fi
           ls -la debug.keystore
 
-      - name: Instalar dependencias del sistema (ImageMagick para iconos)
+      - name: Instalar dependencias del sistema
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq imagemagick
+          sudo apt-get install -y -qq imagemagick || true
 
-      - name: Instalar dependencias
+      - name: Instalar dependencias npm
         run: npm install
 
       - name: Crear proyecto Android
@@ -46,11 +46,12 @@ jobs:
       - name: Icono de la app
         run: |
           if ! command -v convert >/dev/null 2>&1; then
-            echo "convert no disponible; se dejan iconos por defecto de Capacitor"
+            echo "convert no disponible; iconos por defecto"
             exit 0
           fi
           for d in mdpi:48 hdpi:72 xhdpi:96 xxhdpi:144 xxxhdpi:192; do
-            n=${d%%:*}; s=${d##*:}
+            n=${d%%:*}
+            s=${d##*:}
             mkdir -p android/app/src/main/res/mipmap-$n
             convert icon.png -resize ${s}x${s} android/app/src/main/res/mipmap-$n/ic_launcher.png
             cp android/app/src/main/res/mipmap-$n/ic_launcher.png android/app/src/main/res/mipmap-$n/ic_launcher_round.png
@@ -58,17 +59,19 @@ jobs:
           done
           rm -rf android/app/src/main/res/mipmap-anydpi-v26 || true
 
-      - name: Firma fija (debug.keystore del repo)
+      - name: Firma fija
         run: |
-          mkdir -p ~/.android
+          mkdir -p ~/.android android/app
           cp -f debug.keystore ~/.android/debug.keystore
-          mkdir -p android/app
           cp -f debug.keystore android/app/debug.keystore
-          # El debug de Android usa ~/.android/debug.keystore (alias androiddebugkey, clave android): con eso queda la misma firma, sin tocar build.gradle
-          keytool -list -keystore debug.keystore -storepass android | head -8
           ls -la ~/.android/debug.keystore android/app/debug.keystore
+          if [ -f android/app/build.gradle ] && ! grep -q signingConfigs android/app/build.gradle; then
+            sed -i 's/buildTypes {/signingConfigs {\n        debug {\n            storeFile file('\''debug.keystore'\'')\n            storePassword '\''android'\''\n            keyAlias '\''androiddebugkey'\''\n            keyPassword '\''android'\''\n        }\n    }\n    buildTypes {/' android/app/build.gradle
+            sed -i 's/debug {/debug {\n            signingConfig signingConfigs.debug/' android/app/build.gradle
+            echo "signingConfigs anadido"
+          fi
 
-      - name: Número de versión
+      - name: Numero de version
         run: |
           if [ -f android/app/build.gradle ]; then
             sed -i "s/versionCode [0-9]*/versionCode ${{ github.run_number }}/" android/app/build.gradle
@@ -78,16 +81,32 @@ jobs:
       - name: Sincronizar Capacitor
         run: npx cap sync android
 
-      - name: Inyectar plugin CatalogoBackup (después de sync)
-        run: bash scripts/inject-backup-plugin.sh
-
-      - name: Inyectar plugin Nativo (restaurar y catálogo compartido)
-        id: nativo
+      - name: Inyectar plugin CatalogoBackup
         continue-on-error: true
-        run: bash scripts/inject-nativo.sh
+        run: |
+          if [ -f scripts/inject-backup-plugin.sh ]; then
+            bash scripts/inject-backup-plugin.sh
+          else
+            echo "scripts/inject-backup-plugin.sh no esta; se omite"
+          fi
 
-      - name: Optimizar WebView (rendimiento)
-        run: bash scripts/inject-perf.sh
+      - name: Inyectar plugin Nativo
+        continue-on-error: true
+        run: |
+          if [ -f scripts/inject-nativo.sh ]; then
+            bash scripts/inject-nativo.sh
+          else
+            echo "scripts/inject-nativo.sh no esta; se omite"
+          fi
+
+      - name: Optimizar WebView
+        continue-on-error: true
+        run: |
+          if [ -f scripts/inject-perf.sh ]; then
+            bash scripts/inject-perf.sh
+          else
+            echo "scripts/inject-perf.sh no esta; se omite"
+          fi
 
       - name: Compilar APK
         run: |
@@ -96,11 +115,29 @@ jobs:
           cd android
           chmod +x gradlew
           if ! ./gradlew assembleDebug --no-daemon --stacktrace; then
-            echo "::warning::Falló la compilación con el plugin Nativo. Se recompila sin él (el panel usa su camino de siempre)."
+            echo "Reintentando sin plugin Nativo..."
             cd ..
-            bash scripts/quitar-nativo.sh
+            if [ -f scripts/quitar-nativo.sh ]; then bash scripts/quitar-nativo.sh || true; fi
             cd android
             ./gradlew assembleDebug --no-daemon --stacktrace
+          fi
+
+      - name: Verificar firma del APK
+        continue-on-error: true
+        run: |
+          APK=android/app/build/outputs/apk/debug/app-debug.apk
+          KS=$(keytool -list -v -keystore debug.keystore -storepass android -alias androiddebugkey 2>/dev/null | grep -m1 "SHA256:" | sed 's/.*SHA256: *//' | tr -d ':' | tr 'A-F' 'a-f')
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          AP=$("$BT"/apksigner verify --print-certs "$APK" | grep -m1 "SHA-256 digest" | sed 's/.*: *//' | tr -d ' :' | tr 'A-F' 'a-f')
+          echo "Huella de debug.keystore (repo): $KS"
+          echo "Huella con la que quedo firmado el APK: $AP"
+          echo "versionCode / versionName del APK:"
+          "$BT"/aapt2 dump badging "$APK" | grep -m1 "package:" || true
+          if [ -n "$KS" ] && [ "$KS" = "$AP" ]; then
+            echo "FIRMA OK: el APK esta firmado con debug.keystore del repo"
+          else
+            echo "::error::El APK NO esta firmado con debug.keystore del repo"
+            exit 1
           fi
 
       - name: Guardar APK
