@@ -67,7 +67,6 @@ jobs:
           ls -la ~/.android/debug.keystore android/app/debug.keystore
           if [ -f android/app/build.gradle ] && ! grep -q signingConfigs android/app/build.gradle; then
             sed -i 's/buildTypes {/signingConfigs {\n        debug {\n            storeFile file('\''debug.keystore'\'')\n            storePassword '\''android'\''\n            keyAlias '\''androiddebugkey'\''\n            keyPassword '\''android'\''\n        }\n    }\n    buildTypes {/' android/app/build.gradle
-            sed -i 's/debug {/debug {\n            signingConfig signingConfigs.debug/' android/app/build.gradle
             echo "signingConfigs anadido"
           fi
 
@@ -109,18 +108,30 @@ jobs:
           fi
 
       - name: Compilar APK
+        shell: bash
         run: |
           cp -f debug.keystore android/app/debug.keystore
           cp -f debug.keystore ~/.android/debug.keystore
           cd android
           chmod +x gradlew
-          if ! ./gradlew assembleDebug --no-daemon --stacktrace; then
+          if ! ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee ../build1.log; then
             echo "Reintentando sin plugin Nativo..."
             cd ..
             if [ -f scripts/quitar-nativo.sh ]; then bash scripts/quitar-nativo.sh || true; fi
             cd android
-            ./gradlew assembleDebug --no-daemon --stacktrace
+            ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee ../build2.log
           fi
+
+      - name: Resumen del error (si fallo)
+        if: failure()
+        run: |
+          for f in build1.log build2.log; do
+            if [ -f "$f" ]; then
+              echo "=============== $f ==============="
+              grep -n -A 12 "What went wrong" "$f" | head -40 || true
+              grep -n "error:" "$f" | head -10 || true
+            fi
+          done
 
       - name: Verificar firma del APK
         continue-on-error: true
