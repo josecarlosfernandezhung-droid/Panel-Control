@@ -151,14 +151,35 @@ public class NativoPlugin extends Plugin {
         final Uri uri = result.getData().getData();
         getBridge().saveCall(call);
         new Thread(() -> {
-            try (InputStream in = getContext().getContentResolver().openInputStream(uri)) {
+            try {
                 int[] n = new int[1], mant = new int[1];
                 String modo = call.getString("modo", "todo");
+                Nucleo.calRest = "media".equals(call.getString("calidad", "talcual")) ? "media" : "talcual";
                 boolean mejor = Boolean.TRUE.equals(call.getBoolean("conservarMejor", false));
-                String datos = Nucleo.descomprimir(in, dirFotos(), n, (h, t) -> avance("restaurar", h, t), modo, mejor, mant);
+                List<String> vistos = new ArrayList<>();
+                String datos = null;
+                /* 1) Directo del archivo elegido (por su descriptor): no hace falta copiar copias de cientos de MB ni tener espacio libre */
+                try (android.os.ParcelFileDescriptor pfd = getContext().getContentResolver().openFileDescriptor(uri, "r")) {
+                    if (pfd != null) {
+                        vistos.clear(); n[0] = 0; mant[0] = 0;
+                        datos = Nucleo.restaurarArchivo(new File("/proc/self/fd/" + pfd.getFd()), dirFotos(), n, (h, t) -> avance("restaurar", h, t), modo, mejor, mant, vistos);
+                    }
+                } catch (Throwable ex0) { datos = null; }
+                /* 2) Si no se pudo (o no trae datos.json): lectura en flujo y, si hace falta, copia temporal */
+                if (datos == null || datos.trim().isEmpty()) {
+                    vistos.clear(); n[0] = 0; mant[0] = 0;
+                    datos = Nucleo.restaurar(() -> getContext().getContentResolver().openInputStream(uri), getContext().getCacheDir(), dirFotos(), n, (h, t) -> avance("restaurar", h, t), modo, mejor, mant, vistos);
+                }
                 JSObject r = new JSObject();
-                if (datos == null) r.put("invalido", true);
-                else { r.put("datos", datos); r.put("fotos", n[0]); r.put("mantenidas", mant[0]); }
+                if (datos == null || datos.trim().isEmpty()) {
+                    r.put("invalido", true);
+                    try (android.os.ParcelFileDescriptor pfd2 = getContext().getContentResolver().openFileDescriptor(uri, "r")) {
+                        if (pfd2 != null) r.put("diag", Nucleo.diagnostico(new File("/proc/self/fd/" + pfd2.getFd())));
+                    } catch (Throwable exd) { r.put("diag", "no se pudo examinar: " + exd.getMessage()); }
+                    JSArray ent = new JSArray();
+                    for (String nombreEntrada : vistos) ent.put(nombreEntrada);
+                    r.put("entradas", ent);
+                } else { r.put("datos", datos); r.put("fotos", n[0]); r.put("mantenidas", mant[0]); }
                 call.resolve(r);
             } catch (Throwable e) { call.reject(String.valueOf(e.getMessage())); }
             finally { getBridge().releaseCall(call); }
