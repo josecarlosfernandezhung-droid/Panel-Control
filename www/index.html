@@ -7174,21 +7174,19 @@ ACT['exp-html'] = async function () {
 };
 ACT['m-pick'] = function (el) { closeModal(el.getAttribute('data-v')); };
 /* ---------- APK del catálogo para clientes (se compila en GitHub Actions del propio sitio) ---------- */
-var APK_KS = "";
+var APK_KS = "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";
 function apkWorkflow() {
   return ['name: APK del catalogo para clientes', 'on:', '  workflow_dispatch:', '  push:', '    paths:', "      - 'apk-cliente/**'", "      - '.github/workflows/apk-cliente.yml'", 'permissions:', '  contents: write', 'jobs:', '  build:', '    runs-on: ubuntu-latest', '    defaults:', '      run:', '        working-directory: apk-cliente', '    steps:',
-    '      - uses: actions/checkout@v4',
-    '      - uses: actions/setup-node@v4', '        with:', '          node-version: 20',
-    '      - uses: actions/setup-java@v4', '        with:', '          distribution: temurin', '          java-version: 17',
+    '      - uses: actions/checkout@v4', '      - uses: actions/setup-node@v4', '        with:', '          node-version: 20', '      - uses: actions/setup-java@v4', '        with:', '          distribution: temurin', '          java-version: 17',
     '      - name: Dependencias', '        run: |', '          sudo apt-get update -qq', '          sudo apt-get install -y -qq imagemagick || true', '          npm install', '          npx cap add android',
-    "          sed -i 's/<application/<application android:usesCleartextTraffic=\\\"true\\\"/' android/app/src/main/AndroidManifest.xml || true",
-    '      - name: Icono', '        run: |', '          for d in mdpi:48 hdpi:72 xhdpi:96 xxhdpi:144 xxxhdpi:192; do', '            n=${d%%:*}; s=${d##*:}', '            mkdir -p android/app/src/main/res/mipmap-$n', '            convert icon.png -resize ${s}x${s} android/app/src/main/res/mipmap-$n/ic_launcher.png || true', '            cp android/app/src/main/res/mipmap-$n/ic_launcher.png android/app/src/main/res/mipmap-$n/ic_launcher_round.png || true', '            cp android/app/src/main/res/mipmap-$n/ic_launcher.png android/app/src/main/res/mipmap-$n/ic_launcher_foreground.png || true', '          done', '          rm -rf android/app/src/main/res/mipmap-anydpi-v26 || true',
-    '          sed -i "s/versionCode [0-9]*/versionCode ${{ github.run_number }}/" android/app/build.gradle || true',
-    '          sed -i "s/versionName \\"[^\\"]*\\"/versionName \\"1.${{ github.run_number }}\\"/" android/app/build.gradle || true',
+    "          sed -i 's/<application/<application android:usesCleartextTraffic=\"true\"/' android/app/src/main/AndroidManifest.xml || true",
+    '      - name: Icono y firma', '        run: |', '          for d in mdpi:48 hdpi:72 xhdpi:96 xxhdpi:144 xxxhdpi:192; do', '            n=${d%%:*}; s=${d##*:}', '            mkdir -p android/app/src/main/res/mipmap-$n', '            convert icon.png -resize ${s}x${s} android/app/src/main/res/mipmap-$n/ic_launcher.png || true', '            cp android/app/src/main/res/mipmap-$n/ic_launcher.png android/app/src/main/res/mipmap-$n/ic_launcher_round.png || true', '            cp android/app/src/main/res/mipmap-$n/ic_launcher.png android/app/src/main/res/mipmap-$n/ic_launcher_foreground.png || true', '          done', '          rm -rf android/app/src/main/res/mipmap-anydpi-v26 || true',
+    '          mkdir -p ~/.android', '          cp -f debug.keystore ~/.android/debug.keystore', '          cp -f debug.keystore android/app/debug.keystore',
+    '          if [ -f android/app/build.gradle ] && ! grep -q signingConfigs android/app/build.gradle; then', "            sed -i 's/buildTypes {/signingConfigs {\\n        debug {\\n            storeFile file('\\''debug.keystore'\\'')\\n            storePassword '\\''android'\\''\\n            keyAlias '\\''androiddebugkey'\\''\\n            keyPassword '\\''android'\\''\\n        }\\n    }\\n    buildTypes {/' android/app/build.gradle", '          fi',
+    '          sed -i "s/versionCode [0-9]*/versionCode ${{ github.run_number }}/" android/app/build.gradle', '          sed -i "s/versionName \\"[^\\"]*\\"/versionName \\"1.${{ github.run_number }}\\"/" android/app/build.gradle',
     '      - name: Compilar', '        run: |', '          npx cap sync android', '          cd android', '          chmod +x gradlew', '          ./gradlew assembleDebug --no-daemon',
     '      - name: Publicar APK', '        env:', '          GH_TOKEN: ${{ github.token }}', '        run: |', '          cp android/app/build/outputs/apk/debug/app-debug.apk ../catalogo.apk', '          gh release create "apk-${{ github.run_number }}" ../catalogo.apk --title "Catalogo ${{ github.run_number }}" --notes "APK del catalogo para clientes" --latest'].join('\n') + '\n';
 }
-
 async function apkIcono(st) {
   var cv = document.createElement('canvas'); cv.width = cv.height = 512; var cx = cv.getContext('2d'), ok = false;
   try {
@@ -7223,14 +7221,14 @@ ACT['apk-cat'] = async function () {
     setBusyText('Comprobando la conexión con GitHub…');
     try { await window.ghx(''); } catch (e0) { throw new Error(/Token inv/i.test(e0.message) ? 'GitHub rechaza el token guardado (' + g.owner + '/' + g.repo + '). Entra a Menú → Cuenta y conexión, pega de nuevo el token (sin espacios) y guarda.' : e0.message); }
     setBusyText('Subiendo archivos a GitHub…');
-    var icono = await apkIcono(st), files = [['apk-cliente/www/index.html', htm, 'utf-8'], ['apk-cliente/capacitor.config.json', cfg, 'utf-8'], ['apk-cliente/package.json', pkg, 'utf-8'], ['apk-cliente/icon.png', icono, 'base64'], ['.github/workflows/apk-cliente.yml', apkWorkflow(), 'utf-8']], es = [];
+    var icono = await apkIcono(st), files = [['apk-cliente/www/index.html', htm, 'utf-8'], ['apk-cliente/capacitor.config.json', cfg, 'utf-8'], ['apk-cliente/package.json', pkg, 'utf-8'], ['apk-cliente/debug.keystore', APK_KS, 'base64'], ['apk-cliente/icon.png', icono, 'base64'], ['.github/workflows/apk-cliente.yml', apkWorkflow(), 'utf-8']], es = [];
     files = files.concat(imgF); var nSub = 0, sigue = 0;
     es = new Array(files.length);
     await Promise.all([0, 1, 2, 3].map(async function () {
       while (sigue < files.length) { var ix = sigue++, bl = await window.ghx('/git/blobs', 'POST', { content: files[ix][1], encoding: files[ix][2] }); es[ix] = { path: files[ix][0], mode: '100644', type: 'blob', sha: bl.sha }; nSub++; if (nSub % 5 === 0 || nSub === files.length) setBusyText('Subiendo archivos a GitHub… ' + nSub + '/' + files.length); }
     }));
-    /* quita fotos viejas y cualquier keystore que GitHub bloquee como secreto */
-    try { var ref0 = await window.ghx('/git/ref/heads/' + B), pc0 = await window.ghx('/git/commits/' + ref0.object.sha), t0 = await window.ghx('/git/trees/' + pc0.tree.sha + '?recursive=1'), nuevos = {}; es.forEach(function (x) { nuevos[x.path] = 1; }); (t0.tree || []).forEach(function (x) { if (x.type !== 'blob') return; if (x.path.indexOf('apk-cliente/www/img/') === 0 && !nuevos[x.path]) es.push({ path: x.path, mode: '100644', type: 'blob', sha: null }); if (/\.keystore$/i.test(x.path) || /debug\.keystore$/i.test(x.path)) es.push({ path: x.path, mode: '100644', type: 'blob', sha: null }); }); if (!nuevos['apk-cliente/debug.keystore']) es.push({ path: 'apk-cliente/debug.keystore', mode: '100644', type: 'blob', sha: null }); } catch (eLimp) { }
+    /* quita las fotos de una versión anterior que ya no se usan */
+    try { var ref0 = await window.ghx('/git/ref/heads/' + B), pc0 = await window.ghx('/git/commits/' + ref0.object.sha), t0 = await window.ghx('/git/trees/' + pc0.tree.sha + '?recursive=1'), nuevos = {}; es.forEach(function (x) { nuevos[x.path] = 1; }); (t0.tree || []).forEach(function (x) { if (x.type === 'blob' && x.path.indexOf('apk-cliente/www/img/') === 0 && !nuevos[x.path]) es.push({ path: x.path, mode: '100644', type: 'blob', sha: null }); }); } catch (eLimp) { }
     var ref = await window.ghx('/git/ref/heads/' + B), pc = await window.ghx('/git/commits/' + ref.object.sha), tr = await window.ghx('/git/trees', 'POST', { base_tree: pc.tree.sha, tree: es });
     var cm = await window.ghx('/git/commits', 'POST', { message: 'App (APK) del catálogo para clientes', tree: tr.sha, parents: [ref.object.sha] });
     await window.ghx('/git/refs/heads/' + B, 'PATCH', { sha: cm.sha });
@@ -7989,7 +7987,7 @@ async function gh(path, method, body, intento) {
     return gh(path, method, body, (intento || 0) + 1);
   }
   if (limite) throw new Error('GitHub sigue limitando las subidas. Espera unos minutos.');
-  throw new Error(r.status === 401 ? 'Token inválido o vencido.' : (r.status === 403 || r.status === 404) ? 'Sin acceso al repositorio: revisa usuario, repositorio y que el token tenga «Contents: Read and write».' : /secret|rule violation|push protection/i.test(msg) ? 'GitHub bloqueó el envío por un secreto en el contenido. Detalle: ' + (msg || '').slice(0, 160) : (msg || 'Error de GitHub ' + r.status));
+  throw new Error(r.status === 401 ? 'Token inválido o vencido.' : (r.status === 403 || r.status === 404) ? 'Sin acceso al repositorio: revisa usuario, repositorio y que el token tenga «Contents: Read and write».' : (msg || 'Error de GitHub ' + r.status));
 }
 
 /* ---- Sitio propio por tienda: repositorio nuevo con el nombre de la tienda + GitHub Pages ---- */
@@ -8300,6 +8298,36 @@ async function srvPushInfo(st, ms) {
   var r = await fetchT(u + '/api/tienda/info', { method: 'POST', body: JSON.stringify(body) }, ms || 30000), j = await r.json().catch(function () { return {}; });
   if (r.ok && j.ok) { sv.tiendaHash = clave; save(); }
 }
+/* Pedidos del panel -> servidor de la PC (Cuentas y gastos → Pedidos). Se mandan los Nuevos y los cambios de estado; la PC confirma, cancela o elimina y el panel lo aplica en la siguiente sincronización */
+async function srvPedidos(st, ms) {
+  var sv = APP.cfg.srv || {}, u = String(sv.url || '').trim().replace(/\/+$/, ''); if (!u) return 0; if (!/^https?:\/\//.test(u)) u = 'http://' + u;
+  var t = tasasEfectivas(st), lim = Date.now() - 60 * 864e5, lista = [], marcar = [], p2 = function (n) { return (n < 10 ? '0' : '') + n; };
+  st.pedidos.forEach(function (p) {
+    if (!p || !(p.f >= lim) || (p.srvEs === p.es && p.srvSku)) return; if (!p.srvEs && p.es !== 'nuevo') return;
+    var d = new Date(p.f), cur0 = p.mon || 'CUP';
+    lista.push({ ref: p.c, estado: p.es, hora: d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate()) + ' ' + p2(d.getHours()) + ':' + p2(d.getMinutes()) + ':' + p2(d.getSeconds()),
+      cliente: (p.cl && p.cl.n) || '', tel: (p.cl && p.cl.t) || '', dir: (p.cl && p.cl.d) || '',
+      entrega: p.en && p.en.t === 'domicilio' ? 'Domicilio' + (p.en.z ? ' (' + p.en.z + ')' : '') : p.en && p.en.t === 'nota' ? 'Entrega a coordinar' : 'Recogida en el local',
+      pago: p.pg || '', nota: p.no || '', moneda: cur0, total: totalPedido(p),
+      items: (p.it || []).map(function (i) { var c = convertir(num(i.p), i.m || cur0, 'CUP', t); var pr0 = prodById(st, i.id); return { s: String((pr0 && pr0.sku) || ''), n: String(i.n || '') + (i.on ? ' (' + i.on + ')' : ''), q: num(i.q) || 1, p: num(i.p), pc: c != null ? Math.round(c * 100) / 100 : num(i.p) }; }) });
+    marcar.push(p);
+  });
+  var ack = (st.srvAck || []).slice();
+  var r = await fetchT(u + '/api/tienda/pedidos', { method: 'POST', body: JSON.stringify({ pedidos: lista, ack: ack }) }, ms || 20000), j = await r.json().catch(function () { return {}; });
+  if (!r.ok || !j.ok) return 0;
+  marcar.forEach(function (p) { p.srvEs = p.es; p.srvSku = 1; }); st.srvAck = [];
+  var es = j.estados || {};
+  for (var ref in es) {
+    var p = st.pedidos.filter(function (x) { return x.c === ref; })[0], e = String(es[ref] || '').toLowerCase();
+    if (p) {
+      if (e === 'eliminado') { st.pedidos = st.pedidos.filter(function (x) { return x.c !== ref; }); (st.pedDel = st.pedDel || []).push(ref); }
+      else if (ESTADOS[e] && p.es !== e) { await setEstadoPedido(st, p, e); p.srvEs = e; }
+      else if (ESTADOS[e]) p.srvEs = e;
+    }
+    st.srvAck.push(ref);
+  }
+  save(true); return lista.length;
+}
 async function srvSync(ms) {
   var j = await srvEstado(ms), st = ST(); if (!st) throw new Error('Primero trae o crea la tienda.');
   var bySku = {}, byNom = {}; st.prods.forEach(function (p) { if (p.sku) bySku[skuKey(p.sku)] = p; byNom[nz(p.nombre)] = p; });
@@ -8334,10 +8362,11 @@ async function srvSync(ms) {
   var tasaNueva = Number(j.tasaDolar) || 0, tasaCambio = false;
   if (tasaNueva > 0) { st.tasas = st.tasas || {}; if (num(st.tasas.USD) !== tasaNueva || st.tasaFuente !== 'manual') { st.tasas.USD = tasaNueva; st.tasaFuente = 'manual'; (st.flags = st.flags || {}).monedas = true; tasaCambio = true; } }
   try { await srvPushInfo(st, ms); } catch (e) { }
-  st.dirty = true; save(true); return { tasa: tasaNueva, tasaCambio: tasaCambio, n: n, sin: sin, ventas: j.ventas, llegaron: lote.length, precios: cambioPrecio, agotados: ausentes + sinReg, reactivados: reactivados, creados: creados, sinPrecio: j.items.length > 0 && !j.items.some(function (x) { return x.precio != null; }) };
+  var peds = 0; try { peds = await srvPedidos(st, ms); } catch (e) { }
+  st.dirty = true; save(true); return { peds: peds, tasa: tasaNueva, tasaCambio: tasaCambio, n: n, sin: sin, ventas: j.ventas, llegaron: lote.length, precios: cambioPrecio, agotados: ausentes + sinReg, reactivados: reactivados, creados: creados, sinPrecio: j.items.length > 0 && !j.items.some(function (x) { return x.precio != null; }) };
 }
 ACT['srv-test'] = async function () { var done = busy('Probando…'); try { var j = await srvEstado(); done(); toast('Conectado: ' + j.cantidad + ' productos' + (j.tasaDolar > 0 ? ' · dólar a ' + j.tasaDolar + ' CUP' : '') + (j.ventas ? ' con ventas ✓' : ' (sin ventas: AxisPOS no activo)'), '', 4500); } catch (e) { done(); toast(e.message, 'bad', 5000); } };
-ACT['srv-sync'] = async function () { var done = busy('Leyendo stock y ventas…'); try { var r = await srvSync(); done(); toast(r.n + ' productos actualizados' + (r.llegaron ? ' · ' + r.llegaron + ' llegaron o volvieron a tener cantidad' : '') + (r.precios ? ' · ' + r.precios + ' con precio nuevo' : '') + (r.reactivados ? ' · ' + r.reactivados + ' volvieron a disponibles' : '') + (r.creados ? ' · ' + r.creados + ' nuevos agregados desde el servidor' : '') + (r.tasa > 0 ? ' · dólar a ' + r.tasa + ' CUP' + (r.tasaCambio ? ' (actualizada)' : '') : '') + (r.sinPrecio ? ' · OJO: el servidor no manda precios (reemplaza servidor_pedidos.ps1 por el nuevo y reinícialo)' : '') + (r.agotados ? ' · ' + r.agotados + ' se agotaron (ya no están en el sistema)' : '') + (r.sin ? ' · ' + r.sin + ' del servidor no están en el panel' : ''), '', 5500); refresh(); } catch (e) { done(); toast(e.message, 'bad', 5000); } };
+ACT['srv-sync'] = async function () { var done = busy('Leyendo stock y ventas…'); try { var r = await srvSync(); done(); toast(r.n + ' productos actualizados' + (r.peds ? ' · ' + r.peds + ' pedido(s) enviados a la PC' : '') + (r.llegaron ? ' · ' + r.llegaron + ' llegaron o volvieron a tener cantidad' : '') + (r.precios ? ' · ' + r.precios + ' con precio nuevo' : '') + (r.reactivados ? ' · ' + r.reactivados + ' volvieron a disponibles' : '') + (r.creados ? ' · ' + r.creados + ' nuevos agregados desde el servidor' : '') + (r.tasa > 0 ? ' · dólar a ' + r.tasa + ' CUP' + (r.tasaCambio ? ' (actualizada)' : '') : '') + (r.sinPrecio ? ' · OJO: el servidor no manda precios (reemplaza servidor_pedidos.ps1 por el nuevo y reinícialo)' : '') + (r.agotados ? ' · ' + r.agotados + ' se agotaron (ya no están en el sistema)' : '') + (r.sin ? ' · ' + r.sin + ' del servidor no están en el panel' : ''), '', 5500); refresh(); } catch (e) { done(); toast(e.message, 'bad', 5000); } };
 ROUTES.unshift([/^\/conexion$/, function () {
   var c = APP.cfg, sv = c.srv || (c.srv = { url: '', dias: 30 }), g = G(), st = ST(), S = (st && st.sitio) || {}; bindTo(c, false, function (f) { save(); syncAuth(); if (f === 'ai.prov') refresh(); });
   var body = html`<div class="pg stack"><div class="card"><h2>GitHub (tu sitio)</h2><p class="help" style="margin:0 0 6px">El panel publica directo en el repositorio de tu web. No usa Firebase ni imgbb. Usa un token «fine-grained» solo de ese repositorio con permiso <b>Contents: Read and write</b>.</p>
