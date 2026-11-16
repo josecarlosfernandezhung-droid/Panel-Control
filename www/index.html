@@ -7181,7 +7181,7 @@ function apkWorkflow() {
     '      - name: Dependencias', '        run: |', '          sudo apt-get update -qq', '          sudo apt-get install -y -qq imagemagick || true', '          npm install', '          npx cap add android',
     "          sed -i 's/<application/<application android:usesCleartextTraffic=\"true\"/' android/app/src/main/AndroidManifest.xml || true",
     '      - name: Icono y firma', '        run: |', '          for d in mdpi:48 hdpi:72 xhdpi:96 xxhdpi:144 xxxhdpi:192; do', '            n=${d%%:*}; s=${d##*:}', '            mkdir -p android/app/src/main/res/mipmap-$n', '            convert icon.png -resize ${s}x${s} android/app/src/main/res/mipmap-$n/ic_launcher.png || true', '            cp android/app/src/main/res/mipmap-$n/ic_launcher.png android/app/src/main/res/mipmap-$n/ic_launcher_round.png || true', '            cp android/app/src/main/res/mipmap-$n/ic_launcher.png android/app/src/main/res/mipmap-$n/ic_launcher_foreground.png || true', '          done', '          rm -rf android/app/src/main/res/mipmap-anydpi-v26 || true',
-    '          mkdir -p ~/.android', '          cp -f debug.keystore ~/.android/debug.keystore', '          cp -f debug.keystore android/app/debug.keystore',
+    '          mkdir -p ~/.android android/app', '          keytool -genkeypair -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Catalogo,O=Android,C=US" -noprompt', '          cp -f debug.keystore ~/.android/debug.keystore', '          cp -f debug.keystore android/app/debug.keystore',
     '          if [ -f android/app/build.gradle ] && ! grep -q signingConfigs android/app/build.gradle; then', "            sed -i 's/buildTypes {/signingConfigs {\\n        debug {\\n            storeFile file('\\''debug.keystore'\\'')\\n            storePassword '\\''android'\\''\\n            keyAlias '\\''androiddebugkey'\\''\\n            keyPassword '\\''android'\\''\\n        }\\n    }\\n    buildTypes {/' android/app/build.gradle", '          fi',
     '          sed -i "s/versionCode [0-9]*/versionCode ${{ github.run_number }}/" android/app/build.gradle', '          sed -i "s/versionName \\"[^\\"]*\\"/versionName \\"1.${{ github.run_number }}\\"/" android/app/build.gradle',
     '      - name: Compilar', '        run: |', '          npx cap sync android', '          cd android', '          chmod +x gradlew', '          ./gradlew assembleDebug --no-daemon',
@@ -7221,7 +7221,7 @@ ACT['apk-cat'] = async function () {
     setBusyText('Comprobando la conexión con GitHub…');
     try { await window.ghx(''); } catch (e0) { throw new Error(/Token inv/i.test(e0.message) ? 'GitHub rechaza el token guardado (' + g.owner + '/' + g.repo + '). Entra a Menú → Cuenta y conexión, pega de nuevo el token (sin espacios) y guarda.' : e0.message); }
     setBusyText('Subiendo archivos a GitHub…');
-    var icono = await apkIcono(st), files = [['apk-cliente/www/index.html', htm, 'utf-8'], ['apk-cliente/capacitor.config.json', cfg, 'utf-8'], ['apk-cliente/package.json', pkg, 'utf-8'], ['apk-cliente/debug.keystore', APK_KS, 'base64'], ['apk-cliente/icon.png', icono, 'base64'], ['.github/workflows/apk-cliente.yml', apkWorkflow(), 'utf-8']], es = [];
+    var icono = await apkIcono(st), files = [['apk-cliente/www/index.html', htm, 'utf-8'], ['apk-cliente/capacitor.config.json', cfg, 'utf-8'], ['apk-cliente/package.json', pkg, 'utf-8'], ['apk-cliente/icon.png', icono, 'base64'], ['.github/workflows/apk-cliente.yml', apkWorkflow(), 'utf-8']], es = [];
     files = files.concat(imgF); var nSub = 0, sigue = 0;
     es = new Array(files.length);
     await Promise.all([0, 1, 2, 3].map(async function () {
@@ -7987,7 +7987,7 @@ async function gh(path, method, body, intento) {
     return gh(path, method, body, (intento || 0) + 1);
   }
   if (limite) throw new Error('GitHub sigue limitando las subidas. Espera unos minutos.');
-  throw new Error(r.status === 401 ? 'Token inválido o vencido.' : (r.status === 403 || r.status === 404) ? 'Sin acceso al repositorio: revisa usuario, repositorio y que el token tenga «Contents: Read and write».' : (msg || 'Error de GitHub ' + r.status));
+  throw new Error(r.status === 401 ? 'Token inválido o vencido.' : (r.status === 403 || r.status === 404) ? 'Sin acceso al repositorio: revisa usuario, repositorio y que el token tenga «Contents: Read and write».' : /secret|rule violation|push protection/i.test(msg) ? 'GitHub bloqueó el archivo: detectó un secreto (clave). Ya no se sube el keystore; vuelve a pulsar «App (APK) para clientes».' : (msg || 'Error de GitHub ' + r.status));
 }
 
 /* ---- Sitio propio por tienda: repositorio nuevo con el nombre de la tienda + GitHub Pages ---- */
