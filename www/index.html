@@ -3780,8 +3780,8 @@ function precioAnuncio(st, p) {
   var aj = adAjustaPrecio(st, p, pr, monedaDe(st, p)); return { t: fmtMoney(aj.precio, aj.cur), old: pr.oferta ? fmtNum(aj.antes) : '' };
 }
 async function anuncioCanvas(st, prods, fmt) {
-  var W = 1080, H = fmt === 'v' ? 1920 : 1080, cv = document.createElement('canvas'); cv.width = W; cv.height = H;
-  var cx = cv.getContext('2d'), col = st.color || '#0a7c86', on = colorOn(col), F = 'system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif';
+  var W = 1080, H = fmt === 'v' ? 1920 : 1080, SC = window.__adScale || 1, cv = document.createElement('canvas'); cv.width = W * SC; cv.height = H * SC;
+  var cx = cv.getContext('2d'); cx.scale(SC, SC); var col = st.color || '#0a7c86', on = colorOn(col), F = 'system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif';
   var g = cx.createLinearGradient(0, 0, W, H); g.addColorStop(0, col); g.addColorStop(1, mezclar(col, .5, '#000')); cx.fillStyle = g; cx.fillRect(0, 0, W, H);
   cx.fillStyle = 'rgba(255,255,255,.06)'; cx.beginPath(); cx.arc(W - 80, 60, 300, 0, 7); cx.fill();
   // cabecera
@@ -3828,8 +3828,8 @@ async function anuncioCanvas(st, prods, fmt) {
 async function anuncioHoja(st, prods, hn, tot) {
   var W = 1080, cols = 3, n = prods.length, rows = Math.ceil(n / cols), gx = 50, gap = 24;
   var cw = Math.floor((W - 2 * gx - gap * (cols - 1)) / cols), ch = 440, hy = 44, lh = 110, top = hy + lh + 36, footH = 230;
-  var H = top + rows * (ch + gap) - gap + 30 + footH, cv = document.createElement('canvas'); cv.width = W; cv.height = H;
-  var cx = cv.getContext('2d'), col = st.color || '#0a7c86', on = colorOn(col), F = 'system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif';
+  var H = top + rows * (ch + gap) - gap + 30 + footH, SC = window.__adScale || 1, cv = document.createElement('canvas'); cv.width = W * SC; cv.height = H * SC;
+  var cx = cv.getContext('2d'); cx.scale(SC, SC); var col = st.color || '#0a7c86', on = colorOn(col), F = 'system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif';
   var g = cx.createLinearGradient(0, 0, W, H); g.addColorStop(0, col); g.addColorStop(1, mezclar(col, .5, '#000')); cx.fillStyle = g; cx.fillRect(0, 0, W, H);
   var lx = 50, logo = st.logo ? await bitmapFoto(st.logo) : null;
   cx.save(); rrect(cx, lx, hy, lh, lh, 28); cx.clip(); cx.fillStyle = '#fff'; cx.fillRect(lx, hy, lh, lh);
@@ -4860,7 +4860,7 @@ async function drawCardProtagonista(ctx, W, H, product, img, cfg, accent, pad){
   // ---- fondo difuminado (queda como un marco fino, casi no se nota) ----
   if(img){
     ctx.save();
-    try{ ctx.filter = `blur(${Math.round(55*T.blurScale)}px)`; }catch(e){}
+    try{ ctx.filter = `blur(${Math.round(55*T.blurScale*(window.__adScale||1))}px)`; }catch(e){}
     drawImageCover(ctx, img, -40, -40, W+80, H+80);
     ctx.filter = "none";
     ctx.restore();
@@ -4991,7 +4991,7 @@ async function drawCardClasica(ctx, W, H, product, img, cfg, accent, pad){
   // ---- fondo de TODA la tarjeta: la misma foto del producto, ampliada y difuminada ----
   if(img){
     ctx.save();
-    try{ ctx.filter = `blur(${Math.round(42*T.blurScale)}px)`; }catch(e){}
+    try{ ctx.filter = `blur(${Math.round(42*T.blurScale*(window.__adScale||1))}px)`; }catch(e){}
     drawImageCover(ctx, img, -40, -40, W+80, H+80);
     ctx.filter = "none";
     ctx.restore();
@@ -5061,7 +5061,7 @@ async function drawCardClasica(ctx, W, H, product, img, cfg, accent, pad){
     const padXBadge = 22;
     const textW = ctx.measureText(label).width;
     const boxW = textW + padXBadge*2, boxH = 50;
-    const _catGrad1 = getProductAccentGradient(product, cfg);
+    const _catGrad1 = cfg._grad || getProductAccentGradient(product, cfg);
     ctx.save();
     roundRect(ctx, pad, cursorY, boxW, boxH, boxH/2);
     ctx.fillStyle = "rgba(255,255,255,0.08)";
@@ -5090,13 +5090,14 @@ async function drawCardClasica(ctx, W, H, product, img, cfg, accent, pad){
   ctx.save(); ctx.translate(OFF.name.dx, OFF.name.dy);
   titleLines.forEach((line, i)=>{
     const y = titleTop + i*titleLineHeight + titleLineHeight*0.78;
-    drawLineWithLastWordAccent(ctx, line, pad, y, "#ffffff", accent, i === titleLines.length-1);
+    const _tg = cfg._grad ? accentFillStyle(ctx, cfg._grad, accent, pad, y-titleFit.size, titleMaxW, titleFit.size) : accent;
+    drawLineWithLastWordAccent(ctx, line, pad, y, "#ffffff", _tg, i === titleLines.length-1);
   });
   const titleBottom0 = titleTop + titleLines.length*titleLineHeight + 6;
   // subrayado corto bajo la primera palabra del título
   const firstWord = titleLines[0].split(" ")[0];
   const underlineW = ctx.measureText(firstWord).width;
-  ctx.fillStyle = accent;
+  ctx.fillStyle = cfg._grad ? accentFillStyle(ctx, cfg._grad, accent, pad, 0, Math.max(60, underlineW), 0) : accent;
   ctx.fillRect(pad, titleBottom0 - 2, Math.max(60, underlineW), 5);
   ctx.restore();
   const titleBottom = titleTop + titleLines.length*titleLineHeight + 6;
@@ -5158,7 +5159,7 @@ async function drawCardClasica(ctx, W, H, product, img, cfg, accent, pad){
     roundRect(ctx, boxX, boxY, boxW, boxH, 20);
     ctx.fill();
     ctx.restore();
-    ctx.fillStyle = accent;
+    ctx.fillStyle = cfg._grad ? accentFillStyle(ctx, cfg._grad, accent, boxX+28, 0, 160, 0) : accent;
     ctx.font = `800 ${Math.round(28*T.priceScale)}px ` + FONT_DISPLAY;
     try{ ctx.letterSpacing = "1px"; }catch(e){}
     ctx.fillText("PRECIO", boxX + 28, boxY + Math.round(46*T.priceScale));
@@ -6359,9 +6360,28 @@ async function drawCardBoutique(ctx, W, H, product, img, cfg, accent, pad){
 
 async function drawCardServicio(ctx, W, H, product, img, cfg, accent, pad){
   const T = getCardTuning(cfg);
-  const ink = "#1c2420";
-  ctx.fillStyle = "#faf8f5";
-  ctx.fillRect(0, 0, W, H);
+  const ink = "#ffffff";
+  /* colores de la tarjeta «Clásica»: fondo con la misma foto desenfocada y oscurecida, letras blancas y el color de acento */
+  if(img){
+    ctx.save();
+    try{ ctx.filter = `blur(${Math.round(42*T.blurScale*(window.__adScale||1))}px)`; }catch(e){}
+    drawImageCover(ctx, img, -40, -40, W+80, H+80);
+    ctx.filter = "none";
+    ctx.restore();
+    ctx.fillStyle = "rgba(6,10,10,0.62)";
+    ctx.fillRect(0,0,W,H);
+  }else{
+    const bgGrad = ctx.createLinearGradient(0,0,W,H);
+    bgGrad.addColorStop(0, shadeColor(accent, -0.88));
+    bgGrad.addColorStop(1, shadeColor(accent, -0.65));
+    ctx.fillStyle = bgGrad;
+    ctx.fillRect(0,0,W,H);
+  }
+  const vig = ctx.createRadialGradient(W/2, H*0.35, H*0.25, W/2, H*0.55, H*0.85);
+  vig.addColorStop(0, "rgba(0,0,0,0)");
+  vig.addColorStop(1, "rgba(0,0,0,0.35)");
+  ctx.fillStyle = vig;
+  ctx.fillRect(0,0,W,H);
 
   const grad = getProductAccentGradient(product, cfg);
 
@@ -6396,7 +6416,7 @@ async function drawCardServicio(ctx, W, H, product, img, cfg, accent, pad){
         ctx.clip();
         drawImageCover(ctx, logoImg, pad, cursorY, logoSize, logoSize);
         ctx.restore();
-        ctx.strokeStyle = "rgba(0,0,0,0.12)"; ctx.lineWidth = 2;
+        ctx.strokeStyle = "rgba(255,255,255,0.85)"; ctx.lineWidth = 3;
         ctx.beginPath(); ctx.arc(pad+logoSize/2, cursorY+logoSize/2, logoSize/2, 0, Math.PI*2); ctx.stroke();
       }
     }
@@ -6412,7 +6432,7 @@ async function drawCardServicio(ctx, W, H, product, img, cfg, accent, pad){
   // fecha, arriba a la derecha
   const dateText = new Date().toLocaleDateString("es-CU");
   ctx.font = "600 26px " + FONT_BODY;
-  ctx.fillStyle = "rgba(28,36,32,0.45)";
+  ctx.fillStyle = "rgba(255,255,255,0.6)";
   ctx.textAlign = "right";
   ctx.fillText(dateText, W - pad, pad + 26);
   ctx.textAlign = "left";
@@ -6427,10 +6447,13 @@ async function drawCardServicio(ctx, W, H, product, img, cfg, accent, pad){
     const boxW = textW + 44, boxH = 46;
     ctx.save();
     roundRect(ctx, pad, cursorY, boxW, boxH, boxH/2);
-    ctx.fillStyle = accentFillStyle(ctx, grad, accent, pad, cursorY, boxW, boxH);
+    ctx.fillStyle = "rgba(255,255,255,0.08)";
     ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = accentFillStyle(ctx, grad, accent, pad, cursorY, boxW, boxH);
+    ctx.stroke();
     ctx.restore();
-    ctx.fillStyle = "#ffffff";
+    ctx.fillStyle = accentFillStyle(ctx, grad, accent, pad, cursorY, boxW, boxH);
     ctx.textBaseline = "middle";
     try{ ctx.letterSpacing = "1px"; }catch(e){}
     ctx.fillText(label, pad + 22, cursorY + boxH/2 + 1);
@@ -6488,7 +6511,7 @@ async function drawCardServicio(ctx, W, H, product, img, cfg, accent, pad){
     drawImageWithFocus(ctx, img, pad, photoTop, photoBoxW, photoBoxH, getPhotoFocus(product, cfg));
     ctx.restore();
   }else{
-    ctx.fillStyle = "rgba(28,36,32,0.35)";
+    ctx.fillStyle = "rgba(255,255,255,0.85)";
     ctx.font = "600 34px " + FONT_BODY;
     ctx.textAlign = "center";
     ctx.fillText("📦  Sin foto todavia", W/2, photoTop+photoBoxH/2+10);
@@ -6542,21 +6565,26 @@ async function drawCardServicio(ctx, W, H, product, img, cfg, accent, pad){
     ctx.textAlign = "left";
   }else{
     const priceText = priceCurrencyLabel(cfg, product) + " " + formatNumber(product.price);
-    ctx.font = `800 ${Math.round(38*T.priceScale)}px ` + FONT_DISPLAY;
+    ctx.font = `800 ${Math.round(40*T.priceScale)}px ` + FONT_DISPLAY;
     const priceW = ctx.measureText(priceText).width;
-    const boxW = priceW + 48, boxH = Math.round(58*T.priceScale);
+    const boxW = priceW + 48, boxH = Math.round(96*T.priceScale);
     const boxX = pad + photoBoxW - boxW - 14;
     const boxY = photoTop + photoBoxH - boxH - 14;
     ctx.save();
-    ctx.shadowColor = "rgba(0,0,0,0.25)"; ctx.shadowBlur = 16; ctx.shadowOffsetY = 5;
-    ctx.fillStyle = accentFillStyle(ctx, grad, accent, boxX, boxY, boxW, boxH);
-    roundRect(ctx, boxX, boxY, boxW, boxH, boxH/2);
+    ctx.shadowColor = "rgba(0,0,0,0.45)"; ctx.shadowBlur = 22; ctx.shadowOffsetY = 8;
+    ctx.fillStyle = "#ffffff";
+    roundRect(ctx, boxX, boxY, boxW, boxH, 18);
     ctx.fill();
     ctx.restore();
-    ctx.fillStyle = "#ffffff";
-    ctx.textAlign = "center";
-    ctx.fillText(priceText, boxX+boxW/2, boxY+boxH*0.68);
     ctx.textAlign = "left";
+    ctx.fillStyle = accent;
+    ctx.font = `800 ${Math.round(22*T.priceScale)}px ` + FONT_DISPLAY;
+    try{ ctx.letterSpacing = "1px"; }catch(e){}
+    ctx.fillText("PRECIO", boxX + 24, boxY + Math.round(30*T.priceScale));
+    try{ ctx.letterSpacing = "0px"; }catch(e){}
+    ctx.fillStyle = "#111417";
+    ctx.font = `800 ${Math.round(40*T.priceScale)}px ` + FONT_DISPLAY;
+    ctx.fillText(priceText, boxX + 24, boxY + Math.round(76*T.priceScale));
   }
 
   // ---- pie: teléfono y dirección ----
@@ -6582,7 +6610,7 @@ async function drawCardServicio(ctx, W, H, product, img, cfg, accent, pad){
     }
     if(cfg.address){
       ctx.font = `600 ${Math.round(26*T.contactScale)}px ` + FONT_BODY;
-      ctx.fillStyle = "rgba(28,36,32,0.8)";
+      ctx.fillStyle = "rgba(255,255,255,0.92)";
       ctx.fillText(truncateToWidth(ctx, "📍 " + cfg.address, W-pad*2), pad, fy);
     }
   }
@@ -6598,8 +6626,8 @@ var FN = { protagonista: drawCardProtagonista, clasica: drawCardClasica, minimal
 /* cfg: {storeName,phone,address,currency,primaryColor,logo(imagen),tagline}; product: {id,name,price,oldPrice,category,qty,isNew,sku,unit}; img: imagen ya cargada o null */
 async function render(cfg, product, img, style, W, H) {
   state.config = cfg; applyFont(cfg); cfg._vert = H > W; cfg._sinAgrandar = !cfg._vert && (style === 'protagonista' || style === 'cinta');
-  var cv = document.createElement('canvas'); cv.width = W; cv.height = H;
-  var ctx = cv.getContext('2d'), accent = getProductAccentColor(product, cfg), pad = 56;
+  var SC = window.__adScale || 1, cv = document.createElement('canvas'); cv.width = W * SC; cv.height = H * SC;
+  var ctx = cv.getContext('2d'); ctx.scale(SC, SC); var accent = getProductAccentColor(product, cfg), pad = 56;
   var T = getCardTuning(cfg);
   _cardCorners = resolveCardCorners(product, cfg, T); _cardTopInset = 0;
   var fn = FN[style] || drawCardClasica;
@@ -6728,12 +6756,12 @@ function adContacto(cx, st, x, y, maxW, size, color, una) {
 async function anuncioTarjeta(st, p, estilo, fmt) {
   if (AD_CLASICOS[estilo]) {
     var dd = precioDatos(st, p), sk = stockDe(p), lg = st.logo ? await bitmapFoto(st.logo) : null, im0 = p.fotos && p.fotos.length ? await bitmapFoto(p.fotos[0], window.__adPreferMini) : null;
-    var cfgC = { storeName: st.nombre || '', phone: st.wa || '', address: st.dir || '', currency: dd.cur, primaryColor: st.color || '#0a7c86', logo: lg, tagline: st.lema || '', fontStyle: 'moderna', cardTuning: {}, extraColors: [], mainColors: [], colorMode: 'single', categoryColors: {} };
+    var cfgC = { storeName: st.nombre || '', phone: st.wa || '', address: st.dir || '', currency: dd.cur, primaryColor: st.color || '#0a7c86', logo: lg, tagline: st.lema || '', fontStyle: estilo === 'clasica' ? 'elegante' : 'moderna', cardTuning: estilo === 'clasica' ? { nameScale: 0.92, priceScale: 0.58 } : {}, _grad: estilo === 'clasica' ? ['#22e03a', '#f4e22a'] : null, extraColors: [], mainColors: [], colorMode: 'single', categoryColors: {} };
     var prodC = { id: p.id, name: p.nombre, price: dd.v, oldPrice: dd.oferta ? dd.antes : 0, category: catName(st, p.cat), qty: sk === null ? undefined : sk, isNew: nuevoProd(p), sku: p.sku || '', unit: '', promoLabel: '', urgencyLabel: '' };
     return await TT_CARDS.render(cfgC, prodC, im0, estilo, 1080, fmt === 'v' ? 1920 : 1080);
   }
-  var W = 1080, H = fmt === 'v' ? 1920 : 1080, big = fmt === 'v', cv = document.createElement('canvas'); cv.width = W; cv.height = H;
-  var cx = cv.getContext('2d'), col = st.color || '#0a7c86', acento = mezclar(col, .55, '#fff'), pad = 64, d = precioDatos(st, p);
+  var W = 1080, H = fmt === 'v' ? 1920 : 1080, big = fmt === 'v', SC = window.__adScale || 1, cv = document.createElement('canvas'); cv.width = W * SC; cv.height = H * SC;
+  var cx = cv.getContext('2d'); cx.scale(SC, SC); var col = st.color || '#0a7c86', acento = mezclar(col, .55, '#fff'), pad = 64, d = precioDatos(st, p);
   var logo = st.logo ? await bitmapFoto(st.logo) : null, ims = []; for (var i = 0; i < Math.min(3, p.fotos.length); i++) { var b = await bitmapFoto(p.fotos[i], window.__adPreferMini); if (b) ims.push(b); }
   var cat = catName(st, p.cat), marca = (st.nombre || '').toUpperCase() + ' ' + new Date().toLocaleDateString('es');
   var url = catalogURL(st) || ('https://wa.me/' + waNumero(st.wa));
@@ -6830,7 +6858,7 @@ route(/^\/compartir$/, function () {
       <div class="help" style="margin:0 0 4px">Precio que se muestra</div>
       <div class="fl" style="margin-bottom:8px"><button class="${(APP.ui.adPago || 'ef') === 'ef' ? 'on' : ''}" data-act="ad-pago" data-v="ef">Efectivo</button><button class="${APP.ui.adPago === 'tr' ? 'on' : ''}" data-act="ad-pago" data-v="tr">Transferencia</button><button class="${APP.ui.adPago === 'usd' ? 'on' : ''}" data-act="ad-pago" data-v="usd">USD</button></div>
       <div class="fl" style="margin-bottom:8px"><button class="${(APP.ui.adCal || 'normal') === 'rapida' ? 'on' : ''}" data-act="ad-cal" data-v="rapida">Rápida</button><button class="${(APP.ui.adCal || 'normal') === 'normal' ? 'on' : ''}" data-act="ad-cal" data-v="normal">Normal</button><button class="${(APP.ui.adCal || 'normal') === 'alta' ? 'on' : ''}" data-act="ad-cal" data-v="alta">Alta calidad</button></div>
-      <p class="help" style="margin:0 0 8px">«Rápida» usa miniaturas y comprime más (más ligera y veloz). «Alta calidad» prioriza nitidez.</p>
+      <p class="help" style="margin:0 0 8px">«Rápida» usa miniaturas y comprime más (más ligera y veloz). «Alta calidad» saca la imagen en HD (2160 px de ancho, el doble de nitidez).</p>
       <div class="help" style="margin-bottom:6px">${est === 'grid' ? html`1. Elige productos (<b id="ad-n">${sel.length}</b> elegidos) · hasta 6 en una imagen; si eliges más, se reparten en hojas grandes de 18` : html`1. Elige hasta 6 productos (<b id="ad-n">${sel.length}</b> elegidos) · se crea una imagen por producto`}</div>
       <div class="fl" style="margin-bottom:8px"><button class="${adVer === 'con' ? 'on' : ''}" data-act="ad-ver" data-v="con">Con foto (${conFoto.length})</button><button class="${adVer === 'sin' ? 'on' : ''}" data-act="ad-ver" data-v="sin">Disponibles sin foto (${sinFoto.length})</button></div>
       <div class="hz" style="margin-bottom:8px;gap:8px"><div class="sp" style="position:relative"><input class="in" id="ad-q" type="search" placeholder="Buscar producto…" value="${adQ}" style="border-radius:12px;padding-left:38px;min-height:42px"><span style="position:absolute;left:12px;top:11px;color:var(--mut)">${ic('search', 18)}</span></div>
@@ -6908,7 +6936,8 @@ ACT['ad-pick'] = function (el) {
 ACT['ad-make'] = async function () {
   var st = ST(), prods = (APP.ui.adSel || []).map(function (id) { return prodById(st, id); }).filter(Boolean), est = APP.ui.adEst || 'grid', fmt = APP.ui.adFmt || 'c';
   var cal = APP.ui.adCal || 'normal'; /* rapida | normal | alta */
-  var jpgQ = cal === 'rapida' ? 0.78 : (cal === 'alta' ? 0.92 : 0.88);
+  var jpgQ = cal === 'rapida' ? 0.78 : (cal === 'alta' ? 0.93 : 0.88);
+  window.__adScale = cal === 'alta' ? 2 : 1; /* HD: 2160 px de ancho */
   window.__adPreferMini = cal === 'rapida';
   window.__adPago = APP.ui.adPago || 'ef';
   window.__adCancel = false; ADBM = {};
@@ -6948,13 +6977,13 @@ ACT['ad-make'] = async function () {
       if (b2) blobs.push(b2); c2.width = 1; c2.height = 1; adSuelta([prods[i]]);
       await new Promise(function (r) { setTimeout(r, 0); });
     }
-    done(); ADBM = null;
+    done(); ADBM = null; window.__adScale = 1;
     window.__adPreferMini = false;
     try { var bx = document.getElementById('ad-cancel-btn'); if (bx) bx.remove(); } catch (eR) { }
     if (!blobs.length) throw new Error('No se pudo crear la imagen'); window._adL = blobs; window._ad = blobs[0];
     out.innerHTML = (blobs.length > 1 ? '<div class="wr" style="justify-content:center;margin-bottom:14px"><button class="btn pri sm" data-act="ad-share-all">' + ic('share', 16).s + 'Compartir / guardar las ' + blobs.length + ' juntas</button><button class="btn sm" data-act="ad-zip">' + ic('download', 16).s + 'Todas en un ZIP</button></div>' : '') + blobs.map(function (b, i) { return '<div style="margin-bottom:14px"><img class="pv" style="max-height:420px" src="' + URL.createObjectURL(b) + '" alt="Vista previa"><div class="wr" style="justify-content:center;margin-top:10px"><button class="btn pri sm" data-act="ad-share" data-i="' + i + '">' + ic('share', 16).s + 'Compartir / guardar</button></div></div>'; }).join('') + '<p class="help">Revisa los precios y textos antes de publicarla.</p>';
   } catch (e) {
-    ADBM = null; window.__adPreferMini = false;
+    ADBM = null; window.__adPreferMini = false; window.__adScale = 1;
     try { var bx2 = document.getElementById('ad-cancel-btn'); if (bx2) bx2.remove(); } catch (eR2) { }
     done();
     if (String(e.message || e) === 'cancelado') toast('Generación cancelada');
