@@ -1944,7 +1944,8 @@ function fotoGet(id, sz) {
         return null;
       }
       var rec = { id: id, g: g || t, t: t || g };
-      MEMF[id] = rec;
+      /* Solo se guarda en memoria si se leyeron las dos: si no, la miniatura quedaba como «foto grande» y las tarjetas y el visor se veían borrosos */
+      if (!sz) MEMF[id] = rec;
       return rec;
     })();
   }).catch(function (e) { console.warn('[fotoGet]', id, e); return null; });
@@ -5043,7 +5044,7 @@ async function drawCardClasica(ctx, W, H, product, img, cfg, accent, pad){
     if(cfg.storeName){
       ctx.save(); ctx.translate(OFF.storeName.dx, OFF.storeName.dy);
       ctx.fillStyle = "#ffffff";
-      ctx.font = "700 40px " + FONT_DISPLAY;
+      ctx.font = (cfg._grad ? "700 46px " : "700 40px ") + FONT_DISPLAY;
       ctx.textBaseline = "middle";
       ctx.fillText(truncateToWidth(ctx, cfg.storeName, W - tx - pad), tx, cursorY + logoSize/2 + 2);
       ctx.textBaseline = "alphabetic";
@@ -5091,7 +5092,7 @@ async function drawCardClasica(ctx, W, H, product, img, cfg, accent, pad){
   titleLines.forEach((line, i)=>{
     const y = titleTop + i*titleLineHeight + titleLineHeight*0.78;
     const _tg = cfg._grad ? accentFillStyle(ctx, cfg._grad, accent, pad, y-titleFit.size, titleMaxW, titleFit.size) : accent;
-    drawLineWithLastWordAccent(ctx, line, pad, y, "#ffffff", _tg, i === titleLines.length-1);
+    drawLineWithLastWordAccent(ctx, line, pad, y, "#ffffff", cfg._grad ? "#00ff00" : _tg, i === titleLines.length-1);
   });
   const titleBottom0 = titleTop + titleLines.length*titleLineHeight + 6;
   // subrayado corto bajo la primera palabra del título
@@ -5187,7 +5188,7 @@ async function drawCardClasica(ctx, W, H, product, img, cfg, accent, pad){
       ctx.save();
       ctx.beginPath();
       ctx.arc(pad + circleR, ty - 20, circleR, 0, Math.PI*2);
-      ctx.fillStyle = accent;
+      ctx.fillStyle = cfg._grad ? "#00ff00" : accent;
       ctx.fill();
       ctx.restore();
       ctx.font = `${Math.round(26*T.contactScale)}px ` + FONT_BODY;
@@ -6756,7 +6757,7 @@ function adContacto(cx, st, x, y, maxW, size, color, una) {
 async function anuncioTarjeta(st, p, estilo, fmt) {
   if (AD_CLASICOS[estilo]) {
     var dd = precioDatos(st, p), sk = stockDe(p), lg = st.logo ? await bitmapFoto(st.logo) : null, im0 = p.fotos && p.fotos.length ? await bitmapFoto(p.fotos[0], window.__adPreferMini) : null;
-    var cfgC = { storeName: st.nombre || '', phone: st.wa || '', address: st.dir || '', currency: dd.cur, primaryColor: st.color || '#0a7c86', logo: lg, tagline: st.lema || '', fontStyle: estilo === 'clasica' ? 'elegante' : 'moderna', cardTuning: estilo === 'clasica' ? { nameScale: 0.92, priceScale: 0.58 } : {}, _grad: estilo === 'clasica' ? ['#22e03a', '#f4e22a'] : null, extraColors: [], mainColors: [], colorMode: 'single', categoryColors: {} };
+    var cfgC = { storeName: st.nombre || '', phone: st.wa || '', address: st.dir || '', currency: dd.cur, primaryColor: st.color || '#0a7c86', logo: lg, tagline: st.lema || '', fontStyle: estilo === 'clasica' ? 'elegante' : 'moderna', cardTuning: estilo === 'clasica' ? { nameScale: 0.92, priceScale: 0.58, logoScale: 1.6 } : {}, _grad: estilo === 'clasica' ? ['#22e03a', '#f4e22a'] : null, extraColors: [], mainColors: [], colorMode: 'single', categoryColors: {} };
     var prodC = { id: p.id, name: p.nombre, price: dd.v, oldPrice: dd.oferta ? dd.antes : 0, category: catName(st, p.cat), qty: sk === null ? undefined : sk, isNew: nuevoProd(p), sku: p.sku || '', unit: '', promoLabel: '', urgencyLabel: '' };
     return await TT_CARDS.render(cfgC, prodC, im0, estilo, 1080, fmt === 'v' ? 1920 : 1080);
   }
