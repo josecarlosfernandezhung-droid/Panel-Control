@@ -3673,7 +3673,7 @@ async function pedidosGitHub() {
     } else if (/^ESTADO-V1 /.test(tx)) {
       try { var e2 = JSON.parse(tx.slice(10)), pd = st.pedidos.filter(function (x) { return x.c === e2.c; })[0]; if (pd && ESTADOS[e2.es] && +e2.t > (pd.eu || 0)) { var antes = pd.es; pd.es = e2.es; pd.eu = +e2.t; ajustarStock(st, pd, antes, e2.es); cambio = true; } } catch (e) { }
     } else {
-      leerPedidosWA(st, tx).forEach(function (o) { if (!st.pedidos.some(function (x) { return x.c === o.c; })) { st.pedidos.push(o); n++; cambio = true; } });
+      leerPedidosWA(st, tx).forEach(function (o) { if (mezclaPedido(st, o)) { n++; cambio = true; } });
     }
     if (!eq) { try { await fetchT(base + '/' + it.number, { method: 'PATCH', headers: H, body: JSON.stringify({ state: 'closed' }) }, 20000); } catch (e) { } }
   }
@@ -3713,6 +3713,31 @@ function importaAvisosWA(st, txt) {
   while ((m = rb.exec(String(txt || '')))) { var c2 = m[1].toUpperCase(); if (st.busq.some(function (x) { return x.c === c2; })) continue; st.busq.unshift({ c: c2, x: m[2].trim(), n: m[3].trim(), t: m[4].trim(), f: Date.now() }); n++; }
   return n;
 }
+function numTxt(t) { var x = String(t || '').replace(/\s/g, ''); x = /,\d{1,2}$/.test(x) ? x.replace(/\./g, '').replace(',', '.') : x.replace(/,/g, ''); return parseFloat(x); }
+/* líneas «2 x Nombre - 10,42USD» (SMS) o «• 2 × Nombre (opción) — 5 000 CUP» (WhatsApp) */
+function lineasVisibles(seg) {
+  var out = [];
+  String(seg || '').split('\n').forEach(function (ln) {
+    var m = /^[ \t]*(?:[•\-*]\s*)?(\d{1,4})\s*[x×]\s+(.+?)\s*$/.exec(ln); if (!m) return;
+    var q = parseInt(m[1], 10), rest = m[2], pr = null, mo = '', ix = Math.max(rest.lastIndexOf(' — '), rest.lastIndexOf(' - '));
+    if (ix > 0) { var tail = rest.slice(ix + 3).trim(), pm = /^([\d\s.,]+?)\s*([A-Za-z]{3})$/.exec(tail); if (pm) { pr = numTxt(pm[1]); mo = pm[2].toUpperCase(); rest = rest.slice(0, ix); } else if (/consultar/i.test(tail)) rest = rest.slice(0, ix); }
+    var on = '', om = /\s*\(([^)]+)\)\s*$/.exec(rest); if (om) { on = om[1]; rest = rest.slice(0, om.index); }
+    if (q > 0 && rest.trim()) out.push({ q: q, n: rest.trim(), on: on, pr: isNaN(pr) ? null : pr, m: mo });
+  });
+  return out;
+}
+function prodPorNombre(st, nom) {
+  var k = norm(nom), best = null, bl = 0; if (!k) return null;
+  st.prods.forEach(function (p) { var n = norm(p.nombre); if (!n) return; if (n === k) { best = p; bl = 9999; } else if (bl < 9999 && n.length >= 8 && n.length > bl && (k.indexOf(n) === 0 || (k.length >= 14 && n.indexOf(k.replace(/\.$/, '')) === 0))) { best = p; bl = n.length; } });
+  return best;
+}
+/* agrega el pedido; si ya estaba pero sin atender y esta lectura trae más productos (la anterior estaba incompleta), lo completa */
+function mezclaPedido(st, o) {
+  var x = st.pedidos.filter(function (y) { return y.c === o.c; })[0];
+  if (!x) { st.pedidos.push(o); return 1; }
+  if (x.es === 'nuevo' && (o.it || []).length > (x.it || []).length) { x.it = o.it; x.tm = o.tm; x.tot = o.tot; x.pg = x.pg || o.pg; if (!x.cl || !x.cl.t) x.cl = o.cl; touch(st); return 2; }
+  return 0;
+}
 function leerPedidosWA(st, txt) {
   var re = /\[ref:([0-9A-Za-z]{8,12})\|([^|\]]*)\|([A-Za-z]{3})(?:\|([A-Za-z]))?\]/g, out = [], m, ini = 0, hoy = ahoraHabana().fecha;
   txt = String(txt || '');
@@ -3721,14 +3746,28 @@ function leerPedidosWA(st, txt) {
     var nm = /mi nombre es \*([^*\n]+)\*/i.exec(seg), ub = /Ubicaci[oó]n[^:\n]*:\*?\s*([^\n]+)/i.exec(seg), lineas = [];
     seg.replace(/^[•\-]\s*\*(.+?)\*\s*x(\d+)/gm, function (_, n, q) { lineas.push({ n: n, q: +q }); return ''; });
     var it = [], tot = {};
-    (m[2] ? m[2].split(',') : []).forEach(function (par, i) {
+    var mk = function (p, id, q, nom) {
+      var cur = p ? monedaDe(st, p) : st.mp, pr = 0;
+      if (p) { pr = precioVigente({ p: num(p.precio), of: num(p.ofertaPrecio) > 0 ? { p: num(p.ofertaPrecio), h: p.ofertaFin } : null }, hoy).precio; if (m[4] === 'T' && ratioTransf(st, p)) pr = Math.round(pr * ratioTransf(st, p) * 100) / 100; }
+      return { id: id, n: p ? p.nombre : (nom || 'Producto'), o: '', on: '', q: q, p: pr, m: cur };
+    };
+    (m[2] ? m[2].replace(/\s+/g, '').split(',') : []).forEach(function (par, i) {
       var k = par.lastIndexOf(':'); if (k < 1) return;
       var id = par.slice(0, k); try { id = decodeURIComponent(id); } catch (e) { }
-      var q = Math.max(1, parseInt(par.slice(k + 1), 10) || 1), p = prodById(st, id), cur = p ? monedaDe(st, p) : st.mp, pr = 0;
-      if (p) { pr = precioVigente({ p: num(p.precio), of: num(p.ofertaPrecio) > 0 ? { p: num(p.ofertaPrecio), h: p.ofertaFin } : null }, hoy).precio; if (m[4] === 'T' && ratioTransf(st, p)) pr = Math.round(pr * ratioTransf(st, p) * 100) / 100; }
-      it.push({ id: id, n: p ? p.nombre : ((lineas[i] && lineas[i].n) || 'Producto'), o: '', on: '', q: q, p: pr, m: cur });
-      tot[cur] = (tot[cur] || 0) + pr * q;
+      var q = Math.max(1, parseInt(par.slice(k + 1), 10) || 1), p = prodById(st, id), x = mk(p, id, q, (lineas[i] && lineas[i].n));
+      it.push(x); tot[x.m] = (tot[x.m] || 0) + x.p * q;
     });
+    /* Si la etiqueta [ref] llegó cortada (el mensaje se partió o se perdió un pedazo), las líneas visibles del mensaje mandan: así el pedido nunca queda con menos productos de los que pidió el cliente */
+    var tl = lineasVisibles(seg);
+    if (tl.length > it.length) {
+      it = []; tot = {};
+      tl.forEach(function (l) {
+        var p = prodPorNombre(st, l.n), x = mk(p, p ? p.id : '', l.q, l.n);
+        if (!p && l.pr != null) { x.p = Math.round(l.pr / l.q * 100) / 100; x.m = l.m || st.mp; }
+        if (l.on) x.on = l.on;
+        it.push(x); tot[x.m] = (tot[x.m] || 0) + x.p * l.q;
+      });
+    }
     if (!it.length) continue;
     var ts = parseInt(code.slice(0, 8), 36), ahora = Date.now(); if (!(ts > 1.5e12 && ts < ahora + 86400000)) ts = ahora;
     /* mensaje del catálogo compartido: «Cliente: Ana · 5xxxxxxx», «Pago: …», «Entrega a domicilio: Zona (50 CUP)», «Dirección: …», «Nota: …» */
@@ -3755,9 +3794,9 @@ ACT['ped-sync'] = async function () {
     if (!L.length && no) { soloOp(); return; }
     if (!L.length) { toast('No encontré un pedido en ese texto. Copia el mensaje completo que llegó por WhatsApp.', 'bad', 4500); return; }
   }
-  var n = 0; L.forEach(function (o) { if (!st.pedidos.some(function (x) { return x.c === o.c; })) { st.pedidos.push(o); n++; } });
+  var n = 0, nu = 0; L.forEach(function (o) { var r = mezclaPedido(st, o); if (r === 1) n++; else if (r === 2) nu++; });
   st.pedidos.sort(function (a, b) { return a.c < b.c ? 1 : -1; }); save(true);
-  toast(n ? n + (n === 1 ? ' pedido agregado' : ' pedidos agregados') : 'Ese pedido ya estaba en la lista'); refresh();
+  toast(n ? n + (n === 1 ? ' pedido agregado' : ' pedidos agregados') : nu ? 'Pedido completado: ahora tiene todos sus productos' : 'Ese pedido ya estaba en la lista'); refresh();
 };
 ACT['ped-pegar'] = ACT['ped-sync'];
 ACT['ped-del'] = async function (el) {
@@ -9008,7 +9047,7 @@ ACT['bk-crear'] = async function (el) {
     st.vis = vis;
     Object.keys(ped).forEach(function (k) {
       var rec = ped[k]; if (!rec || typeof rec.txt !== 'string') return;
-      leerPedidosWA(st, rec.txt).forEach(function (o) { if (!st.pedidos.some(function (x) { return x.c === o.c; })) { st.pedidos.push(o); n++; } });
+      leerPedidosWA(st, rec.txt).forEach(function (o) { if (mezclaPedido(st, o)) n++; });
     });
     st.pedidos.sort(function (a, b) { return a.c < b.c ? 1 : -1; }); ultimo = Date.now(); save(true); return { n: n, total: Object.keys(ped).length, dias: Object.keys(vis).length };
   }
@@ -9023,7 +9062,7 @@ ACT['bk-crear'] = async function (el) {
     try {
       var CP = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Clipboard, tx = '';
       if (CP) { var rr = await CP.read(); tx = (rr && rr.value) || ''; } else if (navigator.clipboard && navigator.clipboard.readText) tx = await navigator.clipboard.readText();
-      leerPedidosWA(st, tx).forEach(function (o) { if (!st.pedidos.some(function (x) { return x.c === o.c; })) { st.pedidos.push(o); n++; } });
+      leerPedidosWA(st, tx).forEach(function (o) { if (mezclaPedido(st, o)) n++; });
       if (n) { st.pedidos.sort(function (a, b) { return a.c < b.c ? 1 : -1; }); save(true); }
     } catch (e) { }
     return n;
